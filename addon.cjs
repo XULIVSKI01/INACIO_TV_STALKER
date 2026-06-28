@@ -1,17 +1,6 @@
-// addon.cjs – universal e estável com deteção automática de modo (proxy/direct)
+// addon.cjs – universal e estável 23 junho
 
 const axios = require("axios");
-const fs = require('fs');
-const MODES_FILE = './server_modes.json';
-let serverModes = {};
-if (fs.existsSync(MODES_FILE)) {
-    try {
-        serverModes = JSON.parse(fs.readFileSync(MODES_FILE, 'utf8'));
-    } catch(e) { serverModes = {}; }
-}
-function saveModes() {
-    fs.writeFileSync(MODES_FILE, JSON.stringify(serverModes), 'utf8');
-}
 const crypto = require("crypto");
 const https = require('https'); 
 const { SocksProxyAgent } = require('socks-proxy-agent');
@@ -289,61 +278,14 @@ const addon = {
         const m = { id: "org.xulov.stalker", version: "5.3.0", name: addonName, resources: ["catalog", "stream", "meta"], types: ["tv", "movie", "series"], idPrefixes: ["xlv:"], catalogs: catalogs };
         setCache(cacheKey, m, 60); 
         console.log("[MANIFEST] Manifest gerado com sucesso.");
-        // Agendar testes de modo para servidores Stalker (em background) – útil para a primeira instalação
-        lists.forEach((l, i) => {
-            if (l.type === 'stalker') {
-                setTimeout(() => {
-                    this.testServerMode(l, i, configBase64, '127.0.0.1').catch(() => {});
-                }, 5000 * (i+1));
-            }
-        });
         return m;
     },
     
-    async testServerMode(config, listIdx, configBase64, host) {
-        if (!config || config.type !== 'stalker') return 'direct';
-        const key = config.url;
-        if (serverModes[key]) return serverModes[key]; // já testado, devolve imediatamente
-        try {
-            const catalog = await this.getCatalog('tv', `cat_${listIdx}`, { genre: 'Predefinido', skip: 0 }, configBase64);
-            const firstItem = catalog.metas?.[0];
-            if (!firstItem) return 'direct';
-            const channelId = firstItem.id.split(':')[2]; // extrai o id do canal
-            const proxyUrl = `http://127.0.0.1:${process.env.PORT || 7860}/proxy/${encodeURIComponent(configBase64)}/${listIdx}/${encodeURIComponent(channelId)}?type=tv`;
-            const res = await axios.get(proxyUrl, { timeout: 6000, responseType: 'stream', validateStatus: () => true });
-            let mode = 'direct';
-            if (res.status === 200) {
-                const contentType = res.headers['content-type'] || '';
-                if (contentType.includes('video') || contentType.includes('application/octet-stream')) {
-                    mode = 'proxy';
-                }
-            }
-            serverModes[key] = mode;
-            saveModes();
-            console.log(`[MODE TEST] Servidor ${key} -> ${mode}`);
-            return mode;
-        } catch(e) {
-            serverModes[key] = 'direct';
-            saveModes();
-            console.log(`[MODE TEST] Servidor ${key} falhou -> direct`);
-            return 'direct';
-        }
-    },
-
     async getCatalog(type, id, extra, configBase64) {
         console.log(`[CATALOG] Pedido: type=${type}, id=${id}, genre=${extra.genre || 'N/A'}, skip=${extra.skip || 0}`);
         const lists = this.parseConfig(configBase64);
         const lIdx = parseInt(id.split('_')[1]);
         const config = lists[lIdx]; if (!config) return { metas: [] };
-
-        // Disparar teste de modo do servidor em background (apenas para TV Stalker)
-        if (type === 'tv' && config.type === 'stalker') {
-            const serverKey = config.url;
-            if (!serverModes[serverKey]) {
-                // Ainda não testado: testar em background, sem bloquear
-                this.testServerMode(config, lIdx, configBase64, '127.0.0.1').catch(() => {});
-            }
-        }
         
         const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
         const skip = parseInt(extra.skip) || 0;
@@ -775,20 +717,9 @@ const addon = {
                             cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
                         }
                         if (cleanUrl.includes('://')) {
-                            // Modo determinado pelo teste (já feito no catálogo)
-                            const mode = serverModes[config.url];
-                            if (mode === 'proxy') {
-                                // Só será adicionado o proxy (mais abaixo)
-                            } else if (mode === 'direct') {
-                                const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-                                streams.push({ name: name, url: cleanUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
-                                directAdded = true;
-                            } else {
-                                // Fallback: se modo ainda não definido (raro), mostrar ambos
-                                const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-                                streams.push({ name: name, url: cleanUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
-                                directAdded = true;
-                            }
+                            const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
+                            streams.push({ name: name, url: cleanUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+                            directAdded = true;
                         }
                     } else {
                         console.warn(`[STREAMS WARNING] Nenhuma tentativa devolveu link válido para ${id}`);
@@ -807,13 +738,17 @@ const addon = {
             }
         }
         
-        // Proxy apenas se modo não for 'direct'
-        const mode = serverModes[config.url];
-        if (mode !== 'direct') {
-            const proxyTitle = type === 'movie' ? '🎬 Proxy Estável' : (type === 'series' ? `🍿 Proxy Estável - ${name}` : '🔄 Proxy Estável');
-            streams.push({ name: name, url: pUrl, title: proxyTitle, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
-        }
-        return { streams };
+        // Proxy normal (já existente)
+const proxyTitle = type === 'movie' ? '🎬 Proxy Estável' : (type === 'series' ? `🍿 Proxy Estável - ${name}` : '🔄 Proxy Estável');
+streams.push({ name: name, url: pUrl, title: proxyTitle, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+/*
+// NOVO: stream persistente (modo STBEmu real) – só para TV Stalker
+if (config?.type === 'stalker' && type === 'tv') {
+    const persistentUrl = `https://${host}/live/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(sId)}?type=${type}`;
+    streams.push({ name: name, url: persistentUrl, title: '🔁 Persistente', behaviorHints: { notWebReady: true }, contentType: 'video/mp2t' });
+}
+*/
+return { streams };
     }
 };
 
