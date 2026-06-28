@@ -623,133 +623,147 @@ const addon = {
     },
 
     async getStreams(type, id, configBase64, host) {
-        console.log(`[STREAMS] Pedido de stream: type=${type}, id=${id}`);
-        if (type === "series") await new Promise(resolve => setTimeout(resolve, 2500));
+    console.log(`[STREAMS] Pedido de stream: type=${type}, id=${id}`);
+    if (type === "series") await new Promise(resolve => setTimeout(resolve, 2500));
 
-        const parts = id.split(":"); 
-        const lIdxParts = parts[1].split("_");
-        const lIdx = parseInt(lIdxParts[0]);
-        const sig = lIdxParts[1];
-        const sId = parts[2];
-        const name = decodeURIComponent(parts[3] || "Stream");
-        const lists = this.parseConfig(configBase64); const config = lists[lIdx];
-        if (!config) return { streams: [] };
-        const expectedSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
-        if (sig && sig !== expectedSig) return { streams: [] };
+    const parts = id.split(":"); 
+    const lIdxParts = parts[1].split("_");
+    const lIdx = parseInt(lIdxParts[0]);
+    const sig = lIdxParts[1];
+    const sId = parts[2];
+    const name = decodeURIComponent(parts[3] || "Stream");
+    const lists = this.parseConfig(configBase64); const config = lists[lIdx];
+    if (!config) return { streams: [] };
+    const expectedSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
+    if (sig && sig !== expectedSig) return { streams: [] };
 
-        const pUrl = `https://${host}/proxy/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(sId)}?type=${type}`;
-        let streams = [];
-        let directAdded = false;
+    const pUrl = `https://${host}/proxy/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(sId)}?type=${type}`;
+    let streams = [];
+    let directAdded = false;
+    let realCmd = ''; // vai guardar o comando original para decidir o método
 
-        if (config?.type === 'xtream') {
-            const b = config.url.trim().replace(/\/$/, "");
-            if (type === 'tv') {
-                streams.push({ name: name, url: `${b}/${config.user}/${config.pass}/${sId}`, title: `📺 Directo TV`, behaviorHints: { notWebReady: true }, contentType: 'video/mp2t' });
-            } else if (type === 'movie') {
-                streams.push({ name: name, url: `${b}/movie/${config.user}/${config.pass}/${sId}`, title: `🎬 Directo Filme`, behaviorHints: { notWebReady: false } });
-            } else if (type === 'series') {
-                streams.push({ name: name, url: `${b}/series/${config.user}/${config.pass}/${sId}`, title: `🍿 Directo Série - ${name}`, behaviorHints: { notWebReady: false } });
-            }
-        } else {
-            try {
-                let auth = await addon.authenticate(config);
-                if (auth) {
-                    const decodedCmd = decodeURIComponent(sId);
-                    let realCmd = decodedCmd;
-                    let sNum = null;
-                    if (decodedCmd.includes('|||')) {
-                        let partsCmd = decodedCmd.split('|||');
-                        realCmd = partsCmd[0];
-                        sNum = partsCmd[1];
-                    } else if (decodedCmd.includes('|')) {
-                        let partsCmd = decodedCmd.split('|');
-                        realCmd = partsCmd[0];
-                        sNum = partsCmd[1];
+    if (config?.type === 'xtream') {
+        const b = config.url.trim().replace(/\/$/, "");
+        if (type === 'tv') {
+            streams.push({ name: name, url: `${b}/${config.user}/${config.pass}/${sId}`, title: `📺 Directo TV`, behaviorHints: { notWebReady: true }, contentType: 'video/mp2t' });
+        } else if (type === 'movie') {
+            streams.push({ name: name, url: `${b}/movie/${config.user}/${config.pass}/${sId}`, title: `🎬 Directo Filme`, behaviorHints: { notWebReady: false } });
+        } else if (type === 'series') {
+            streams.push({ name: name, url: `${b}/series/${config.user}/${config.pass}/${sId}`, title: `🍿 Directo Série - ${name}`, behaviorHints: { notWebReady: false } });
+        }
+    } else {
+        try {
+            let auth = await addon.authenticate(config);
+            if (auth) {
+                const decodedCmd = decodeURIComponent(sId);
+                let sNum = null;
+                if (decodedCmd.includes('|||')) {
+                    let partsCmd = decodedCmd.split('|||');
+                    realCmd = partsCmd[0];
+                    sNum = partsCmd[1];
+                } else if (decodedCmd.includes('|')) {
+                    let partsCmd = decodedCmd.split('|');
+                    realCmd = partsCmd[0];
+                    sNum = partsCmd[1];
+                } else {
+                    realCmd = decodedCmd;
+                }
+
+                const cmdType = (type === "movie" || type === "series") ? "vod" : "itv";
+                let seriesParam = sNum ? `&series=${sNum}` : '';
+                let chCheck = type === "tv" ? "&force_ch_link_check=1" : "";
+                console.log(`[STREAMS] Stalker - Extraindo link para cmd/id=${realCmd}, series=${sNum || 'N/A'}`);
+
+                const fetchStreamLink = async (currentAuth) => {
+                    let url = null;
+                    const opts = addon.getAxiosOpts(config, { headers: currentAuth.authData.headers, timeout: 5000 });
+                    let linkUrl = `${currentAuth.api}type=${cmdType}&action=create_link&cmd=${encodeURIComponent(realCmd)}${seriesParam}&sn=${currentAuth.authData.sn}&token=${currentAuth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0`;
+                    let res = await axios.get(linkUrl, opts).catch(() => ({}));
+                    let jsData = res.data?.js;
+                    url = jsData?.cmd || jsData?.url || (typeof jsData === 'string' ? jsData : null);
+                    if (!url && typeof jsData === 'object' && jsData !== null) url = Object.values(jsData).find(v => typeof v === 'string' && (v.startsWith('http') || v.includes('://')));
+                    if (!url || url.trim() === "") {
+                        let linkUrlId = `${currentAuth.api}type=${cmdType}&action=create_link&video_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${currentAuth.authData.sn}&token=${currentAuth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0`;
+                        let resId = await axios.get(linkUrlId, opts).catch(() => ({}));
+                        let jsDataId = resId.data?.js;
+                        url = jsDataId?.cmd || jsDataId?.url || (typeof jsDataId === 'string' ? jsDataId : null);
                     }
-                    const cmdType = (type === "movie" || type === "series") ? "vod" : "itv";
-                    let seriesParam = sNum ? `&series=${sNum}` : '';
-                    let chCheck = type === "tv" ? "&force_ch_link_check=1" : "";
-                    console.log(`[STREAMS] Stalker - Extraindo link para cmd/id=${realCmd}, series=${sNum || 'N/A'}`);
-
-                    const fetchStreamLink = async (currentAuth) => {
-                        let url = null;
-                        const opts = addon.getAxiosOpts(config, { headers: currentAuth.authData.headers, timeout: 5000 });
-                        let linkUrl = `${currentAuth.api}type=${cmdType}&action=create_link&cmd=${encodeURIComponent(realCmd)}${seriesParam}&sn=${currentAuth.authData.sn}&token=${currentAuth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0`;
-                        let res = await axios.get(linkUrl, opts).catch(() => ({}));
-                        let jsData = res.data?.js;
-                        url = jsData?.cmd || jsData?.url || (typeof jsData === 'string' ? jsData : null);
-                        if (!url && typeof jsData === 'object' && jsData !== null) url = Object.values(jsData).find(v => typeof v === 'string' && (v.startsWith('http') || v.includes('://')));
-                        if (!url || url.trim() === "") {
-                            let linkUrlId = `${currentAuth.api}type=${cmdType}&action=create_link&video_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${currentAuth.authData.sn}&token=${currentAuth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0`;
-                            let resId = await axios.get(linkUrlId, opts).catch(() => ({}));
-                            let jsDataId = resId.data?.js;
-                            url = jsDataId?.cmd || jsDataId?.url || (typeof jsDataId === 'string' ? jsDataId : null);
-                        }
-                        if ((!url || url.trim() === "") && type === "series") {
-                            let linkUrlSeries = `${currentAuth.api}type=series&action=create_link&video_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${currentAuth.authData.sn}&token=${currentAuth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0`;
-                            let resSeries = await axios.get(linkUrlSeries, opts).catch(() => ({}));
-                            let jsDataSeries = resSeries.data?.js;
-                            url = jsDataSeries?.cmd || jsDataSeries?.url || (typeof jsDataSeries === 'string' ? jsDataSeries : null);
-                        }
-                        if ((!url || url.trim() === "") && (type === "series" || type === "movie")) {
-                            let linkUrlMovie = `${currentAuth.api}type=vod&action=create_link&movie_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${currentAuth.authData.sn}&token=${currentAuth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0`;
-                            let resMovie = await axios.get(linkUrlMovie, opts).catch(() => ({}));
-                            let jsDataMovie = resMovie.data?.js;
-                            url = jsDataMovie?.cmd || jsDataMovie?.url || (typeof jsDataMovie === 'string' ? jsDataMovie : null);
-                        }
-                        if (url && typeof url === 'string') url = url.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "");
-                        return url;
-                    };
-
-                    let cmdUrl = await fetchStreamLink(auth);
-                    if (!cmdUrl || cmdUrl.trim() === "") {
-                        console.log(`[STREAMS] Link não recebido. Possível token/sessão expirada. Forçando novo token...`);
-                        const authCacheKey = `auth_${config.url}_${config.mac || 'nomac'}`;
-                        delete memCache[authCacheKey]; 
-                        auth = await addon.authenticate(config); 
-                        if (auth) cmdUrl = await fetchStreamLink(auth); 
+                    if ((!url || url.trim() === "") && type === "series") {
+                        let linkUrlSeries = `${currentAuth.api}type=series&action=create_link&video_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${currentAuth.authData.sn}&token=${currentAuth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0`;
+                        let resSeries = await axios.get(linkUrlSeries, opts).catch(() => ({}));
+                        let jsDataSeries = resSeries.data?.js;
+                        url = jsDataSeries?.cmd || jsDataSeries?.url || (typeof jsDataSeries === 'string' ? jsDataSeries : null);
                     }
+                    if ((!url || url.trim() === "") && (type === "series" || type === "movie")) {
+                        let linkUrlMovie = `${currentAuth.api}type=vod&action=create_link&movie_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${currentAuth.authData.sn}&token=${currentAuth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0`;
+                        let resMovie = await axios.get(linkUrlMovie, opts).catch(() => ({}));
+                        let jsDataMovie = resMovie.data?.js;
+                        url = jsDataMovie?.cmd || jsDataMovie?.url || (typeof jsDataMovie === 'string' ? jsDataMovie : null);
+                    }
+                    if (url && typeof url === 'string') url = url.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "");
+                    return url;
+                };
 
-                    if (typeof cmdUrl === 'string' && cmdUrl.trim() !== "") {
-                        console.log(`[STREAMS] Sucesso! URL original recebido: ${cmdUrl}`);
-                        let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
-                        if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
-                            cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
-                        }
-                        if (cleanUrl.includes('://')) {
+                let cmdUrl = await fetchStreamLink(auth);
+                if (!cmdUrl || cmdUrl.trim() === "") {
+                    console.log(`[STREAMS] Link não recebido. Possível token/sessão expirada. Forçando novo token...`);
+                    const authCacheKey = `auth_${config.url}_${config.mac || 'nomac'}`;
+                    delete memCache[authCacheKey]; 
+                    auth = await addon.authenticate(config); 
+                    if (auth) cmdUrl = await fetchStreamLink(auth); 
+                }
+
+                if (typeof cmdUrl === 'string' && cmdUrl.trim() !== "") {
+                    console.log(`[STREAMS] Sucesso! URL original recebido: ${cmdUrl}`);
+                    let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
+                    if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
+                        cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
+                    }
+                    if (cleanUrl.includes('://')) {
+                        // ⚡ Decisão automática com base no comando original do portal (como o STBEmu)
+                        const isFfmpegCmd = realCmd.trim().toLowerCase().startsWith('ffmpeg');
+                        if (isFfmpegCmd) {
+                            // O portal exige FFmpeg → NÃO adiciona Directo TV (será adicionado o Proxy Estável mais abaixo)
+                        } else {
+                            // Link direto → SÓ Directo TV
                             const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
                             streams.push({ name: name, url: cleanUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
                             directAdded = true;
                         }
-                    } else {
-                        console.warn(`[STREAMS WARNING] Nenhuma tentativa devolveu link válido para ${id}`);
                     }
+                } else {
+                    console.warn(`[STREAMS WARNING] Nenhuma tentativa devolveu link válido para ${id}`);
                 }
-            } catch(e) { 
-                console.error(`[STREAM ERROR] Falha no processo de link Stalker para ${id}:`, e.message); 
             }
+        } catch(e) { 
+            console.error(`[STREAM ERROR] Falha no processo de link Stalker para ${id}:`, e.message); 
+        }
 
-            if (!directAdded) {
-                let fallbackUrl = decodeURIComponent(sId).split('|||')[0].split('|')[0].replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
-                if (fallbackUrl.startsWith('http')) {
-                    const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-                    streams.push({ name: name, url: fallbackUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
-                }
+        if (!directAdded) {
+            let fallbackUrl = decodeURIComponent(sId).split('|||')[0].split('|')[0].replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
+            if (fallbackUrl.startsWith('http')) {
+                const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
+                streams.push({ name: name, url: fallbackUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
             }
         }
-        
-        // Proxy normal (já existente)
-const proxyTitle = type === 'movie' ? '🎬 Proxy Estável' : (type === 'series' ? `🍿 Proxy Estável - ${name}` : '🔄 Proxy Estável');
-streams.push({ name: name, url: pUrl, title: proxyTitle, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
-/*
-// NOVO: stream persistente (modo STBEmu real) – só para TV Stalker
-if (config?.type === 'stalker' && type === 'tv') {
-    const persistentUrl = `https://${host}/live/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(sId)}?type=${type}`;
-    streams.push({ name: name, url: persistentUrl, title: '🔁 Persistente', behaviorHints: { notWebReady: true }, contentType: 'video/mp2t' });
-}
-*/
-return { streams };
     }
-};
+    
+    // 🔄 Proxy Estável APENAS para comandos que exigem FFmpeg (como faz o STBEmu internamente)
+    const isFfmpegCmd = realCmd.trim().toLowerCase().startsWith('ffmpeg');
+    if (isFfmpegCmd) {
+        const proxyTitle = type === 'movie' ? '🎬 Proxy Estável' : (type === 'series' ? `🍿 Proxy Estável - ${name}` : '🔄 Proxy Estável');
+        streams.push({ name: name, url: pUrl, title: proxyTitle, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+    }
+
+    /*
+    // 🔁 Stream persistente (modo STBEmu real) – também só para TV Stalker com FFmpeg
+    if (isFfmpegCmd && config?.type === 'stalker' && type === 'tv') {
+        const persistentUrl = `https://${host}/live/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(sId)}?type=${type}`;
+        streams.push({ name: name, url: persistentUrl, title: '🔁 Persistente', behaviorHints: { notWebReady: true }, contentType: 'video/mp2t' });
+    }
+    */
+
+    return { streams };
+}
 
 module.exports = addon;
