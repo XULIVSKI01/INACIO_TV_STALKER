@@ -765,5 +765,6 @@ const addon = {
 
     return { streams };
 }
+};
 
 module.exports = addon;
