@@ -1,4 +1,4 @@
-// server.cjs 10 Junho streams estaveis ponto doce + Auto-Deteção Inteligente (BRAIN)
+// server.cjs 10 Junho streams estaveis ponto doce!!!
 
 const express = require("express");
 const cors = require("cors");
@@ -281,7 +281,7 @@ app.get("/proxy/:config/:listIdx/:channelId", async (req, res) => {
                 if ((possibleUrl.startsWith('http://') || possibleUrl.startsWith('https://')) && !isLocalhost) {
                     cleanUrl = possibleUrl;
                 } else {
-                    const linkUrl = `${auth.api}type=vod&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}&long_lived=1&JsHttpRequest=1-0`;
+                    const linkUrl = `${auth.api}type=vod&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
                     const linkRes = await axios.get(linkUrl, addon.getAxiosOpts(configData, { headers: auth.authData.headers }));
                     let streamUrl = linkRes.data?.js?.cmd || linkRes.data?.js || linkRes.data?.cmd;
                     if (!streamUrl || typeof streamUrl !== 'string') return res.status(404).end();
@@ -356,7 +356,7 @@ app.get("/proxy/:config/:listIdx/:channelId", async (req, res) => {
             return;
         }
 
-// ----- TV STALKER (COM ESCUDO DE RECONEXÃO AUTOMÁTICA E CÉREBRO DE DETEÇÃO) -----
+// ----- TV STALKER (COM ESCUDO DE RECONEXÃO AUTOMÁTICA) -----
 const streamKey = `${configData.url}_${channelId}`;
 
 if (!global.activeTvStreams) global.activeTvStreams = {};
@@ -407,7 +407,7 @@ const isDirectLink = (possibleUrl.startsWith('http://') || possibleUrl.startsWit
 
 // Funções internas
 let reconnectAttempts = 0;
-const MAX_RECONNECT = 5; 
+const MAX_RECONNECT = 5; // aumentar um pouco para dar mais oportunidades
 
 const sendError = (msg) => {
     if (!res.headersSent) {
@@ -427,7 +427,7 @@ const execFfmpegLegacy = (urlToPlay, streamHeaders) => {
 
         const ffmpeg = spawn('ffmpeg', [
             '-headers', ffmpegHeaders,
-            '-re', // O Segredo do Ponto Doce para canais difíceis
+            '-re',
             '-i', urlToPlay,
             '-c', 'copy',
             '-f', 'mpegts',
@@ -470,57 +470,14 @@ const execStream = async (urlToPlay, isRetry = false) => {
         global.linkAttempts[streamKey]++;
     }
 
-    // =================================================================
-    // 🧠 LÓGICA DE AUTO-DETEÇÃO E DISTRIBUIÇÃO DE ROTAS (O CÉREBRO)
-    // =================================================================
+    // Se o comando original contém 'ffmpeg', usamos o ffmpeg
     const useFfmpeg = stalkerCmd.trim().toLowerCase().startsWith('ffmpeg');
     const isFfmpegLocal = useFfmpeg && (stalkerCmd.includes('localhost') || stalkerCmd.includes('127.0.0.1'));
-    
-    const urlLower = configData.url.toLowerCase();
-    const isLegacyPortal = urlLower.includes('newpear') || urlLower.includes('repolho') || urlLower.includes('achoquesim') || urlLower.includes('bonky');
 
-    // Decide se precisa do pipeline especial estrito
-    const needsLegacy = isLegacyPortal;
-
-    // Extração robusta de cookies (Corrige MAG_TOKEN_INVALID para qualquer cenário)
-    const rawHeaders = auth.authData.headers || {};
-    const cookieString = rawHeaders['Cookie'] || rawHeaders['cookie'] || "";
-
-    // 🔴 ROTA A: PIPELINE LEGACY
-    if (needsLegacy) {
-        // Correção: usando apenas urlToPlay que é o argumento garantido da função
-        console.log(`[PROXY TV] 🧠 Auto-Deteção: Pipeline LEGACY ativado para -> ${urlToPlay}`);
-        try {
-            const legacyHeaders = {
-                ...rawHeaders,
-                'Cookie': cookieString,
-                'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
-                'Referer': configData.url.replace(/\/$/, "") + "/c/",
-                'Accept': '*/*',
-                'Connection': 'keep-alive'
-            };
-            
-            const code = await execFfmpegLegacy(urlToPlay, legacyHeaders);
-            if (code !== 0 && !res.headersSent) {
-                console.log(`[PROXY TV] Legacy FFmpeg falhou. A fazer redirect de segurança...`);
-                res.setHeader('Accept-Ranges', 'none');
-                res.setHeader('Connection', 'close');
-                res.redirect(302, urlToPlay);
-            }
-            return;
-        } catch (err) {
-            console.error(`[PROXY TV] Erro no pipeline legacy: ${err.message}`);
-            if (!res.headersSent) res.status(502).end();
-            return;
-        }
-    }
-
-    // 🟢 ROTA B: PIPELINE MODERNO (Multiplexador Broadcaster, auto-reconnect)
-    console.log(`[PROXY TV] 🧠 Auto-Deteção: Pipeline MODERNO selecionado para -> ${urlToPlay}`);
     const doAxiosStream = async () => {
+        console.log(`[PROXY TV] A iniciar Pipeline Axios...`);
         const streamHeaders = {
-            ...rawHeaders,
-            'Cookie': cookieString,
+            ...auth.authData.headers,
             'Referer': configData.url.replace(/\/$/, "") + "/c/",
             'Accept': '*/*',
             'Connection': 'keep-alive'
@@ -536,35 +493,64 @@ const execStream = async (urlToPlay, isRetry = false) => {
     };
 
     const doFfmpegStream = () => {
+        console.log(`[PROXY TV] A iniciar Pipeline FFmpeg...`);
+        const { spawn } = require('child_process');
         const ffmpegHeaders = Object.entries({
-            ...rawHeaders,
-            'Cookie': cookieString,
-            'User-Agent': 'Mozilla/5.0 (Unknown; Linux armv7l) AppleWebKit/537.1+ (KHTML, like Gecko) Safari/537.1+ Stalker portal (0.5.66/0.5.66/1.0)',
+            ...auth.authData.headers,
             'Referer': configData.url.replace(/\/$/, "") + "/c/",
             'Accept': '*/*',
             'Connection': 'keep-alive'
         }).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
 
-        const { spawn } = require('child_process');
-        const ffmpeg = spawn('ffmpeg', [
-            '-headers', ffmpegHeaders,
-            '-reconnect', '1',
-            '-reconnect_streamed', '1',
-            '-reconnect_delay_max', '5',
-            '-fflags', 'nobuffer+discardcorrupt+genpts',
-            '-err_detect', 'ignore_err',
-            '-i', urlToPlay,
-            '-c', 'copy',
-            '-f', 'mpegts',
-            '-loglevel', 'error',
-            'pipe:1'
-        ]);
+const ffmpeg = spawn('ffmpeg', [
+    '-headers', ffmpegHeaders,
+    '-re',
+    '-reconnect', '1',
+    '-reconnect_at_eof', '1',
+    '-reconnect_streamed', '1',
+    '-reconnect_delay_max', '5',
+    '-i', urlToPlay,
+    '-c', 'copy',
+    '-f', 'mpegts',
+    '-loglevel', 'error',
+    'pipe:1'
+]);
 
         const source = ffmpeg.stdout;
-        source.killProcess = () => { if (!ffmpeg.killed) ffmpeg.kill('SIGKILL'); };
-        ffmpeg.on('error', () => { if (!source.destroyed) source.destroy(); });
+        source.killProcess = () => {
+            if (!ffmpeg.killed) ffmpeg.kill('SIGKILL');
+        };
+        ffmpeg.on('error', () => {
+            if (!source.destroyed) source.destroy();
+        });
         return source;
     };
+
+    // Se for um comando ffmpeg localhost, usa o pipeline antigo (estável para Bonky)
+if (isFfmpegLocal) {
+    console.log(`[PROXY TV] A usar pipeline legacy para comando localhost...`);
+    try {
+        const streamHeaders = {
+            ...auth.authData.headers,
+            'Referer': configData.url.replace(/\/$/, "") + "/c/",
+            'Accept': '*/*',
+            'Connection': 'keep-alive'
+        };
+        const code = await execFfmpegLegacy(urlToPlay, streamHeaders);
+        if (code !== 0 && !res.headersSent) {
+            // Tenta redirect como fallback (comportamento antigo)
+            console.log(`[PROXY TV] Legacy FFmpeg falhou. A fazer redirect...`);
+            res.setHeader('Accept-Ranges', 'none');
+            res.setHeader('Connection', 'close');
+            res.redirect(302, urlToPlay);
+        }
+        return;
+    } catch (err) {
+        console.error(`[PROXY TV] Erro no pipeline legacy: ${err.message}`);
+        if (!res.headersSent) res.status(502).end();
+        return;
+    }
+}
 
     try {
         let source;
@@ -619,25 +605,25 @@ const execStream = async (urlToPlay, isRetry = false) => {
             await attemptReconnect();
         });
 
-        req.on('close', () => {
-            const cached = global.activeTvStreams[streamKey];
-            if (cached) {
-                cached.clients.delete(res);
-                cached.broadcaster.unpipe(res);
-                if (cached.clients.size === 0) {
-                    console.log(`[PROXY TV] Stremio pausou. A manter ligação ativa por 10 minutos...`);
-                    if (cached.timeout) clearTimeout(cached.timeout);
-                    cached.timeout = setTimeout(() => {
-                        if (cached.clients && cached.clients.size === 0) {
-                            console.log(`[PROXY TV] Ligação libertada após 10 min de inatividade.`);
-                            if (cached.source && cached.source.destroy) cached.source.destroy();
-                            if (cached.broadcaster) cached.broadcaster.destroy();
-                            delete global.activeTvStreams[streamKey];
-                        }
-                    }, 10 * 60 * 1000); // 10 minutos
+req.on('close', () => {
+    const cached = global.activeTvStreams[streamKey];
+    if (cached) {
+        cached.clients.delete(res);
+        cached.broadcaster.unpipe(res);
+        if (cached.clients.size === 0) {
+            console.log(`[PROXY TV] Stremio pausou. A manter ligação ativa por 10 minutos...`);
+            if (cached.timeout) clearTimeout(cached.timeout);
+            cached.timeout = setTimeout(() => {
+                if (cached.clients && cached.clients.size === 0) {
+                    console.log(`[PROXY TV] Ligação libertada após 10 min de inatividade.`);
+                    if (cached.source && cached.source.destroy) cached.source.destroy();
+                    if (cached.broadcaster) cached.broadcaster.destroy();
+                    delete global.activeTvStreams[streamKey];
                 }
-            }
-        });
+            }, 10 * 60 * 1000); // 10 minutos
+        }
+    }
+});
 
     } catch (e) {
         console.error(`[PROXY TV] Erro na ligação: ${e.message}`);
@@ -648,10 +634,11 @@ const execStream = async (urlToPlay, isRetry = false) => {
                 if (newAuth) {
                     auth = newAuth;
                     if (isDirectLink) {
+                        // Para links diretos, não faz create_link; apenas repete o último URL bom
                         const lastUrl = global.lastGoodUrl[streamKey] || possibleUrl;
                         return execStream(lastUrl, true);
                     } else {
-                        const newLinkUrl = `${newAuth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${newAuth.authData.sn}&token=${newAuth.token}&long_lived=1&JsHttpRequest=1-0`;
+                        const newLinkUrl = `${newAuth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${newAuth.authData.sn}&token=${newAuth.token}&JsHttpRequest=1-0`;
                         const newLinkRes = await axios.get(newLinkUrl, addon.getAxiosOpts(configData, { headers: newAuth.authData.headers }));
                         let newStreamUrl = newLinkRes.data?.js?.cmd || newLinkRes.data?.js || newLinkRes.data?.cmd;
                         if (newStreamUrl) {
@@ -684,19 +671,22 @@ async function attemptReconnect() {
     console.log(`[PROXY TV] Tentativa de reconexão ${reconnectAttempts}/${MAX_RECONNECT}...`);
 
     try {
+        // Se for um link direto, tenta reutilizá‑lo com atraso progressivo
         if (isDirectLink) {
             const lastUrl = global.lastGoodUrl[streamKey] || possibleUrl;
             console.log(`[PROXY TV] A reutilizar link direto (tentativa ${reconnectAttempts})...`);
-            const delay = Math.min(1000 * reconnectAttempts, 4000); 
+            // Atraso progressivo para evitar rejeição imediata do servidor
+            const delay = Math.min(1000 * reconnectAttempts, 4000); // 1s, 2s, 3s, 4s...
             await new Promise(resolve => setTimeout(resolve, delay));
             return execStream(lastUrl, true);
         }
 
+        // Para comandos que não são links diretos (ex: IDs internos)
         const newAuth = await addon.authenticate(configData);
         if (!newAuth) throw new Error('Falha na autenticação');
         auth = newAuth;
 
-        const linkUrl = `${newAuth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${newAuth.authData.sn}&token=${newAuth.token}&long_lived=1&JsHttpRequest=1-0`;
+        const linkUrl = `${newAuth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${newAuth.authData.sn}&token=${newAuth.token}&JsHttpRequest=1-0`;
         const linkRes = await axios.get(linkUrl, addon.getAxiosOpts(configData, { headers: newAuth.authData.headers }));
         let newStreamUrl = linkRes.data?.js?.cmd || linkRes.data?.js || linkRes.data?.cmd;
         if (!newStreamUrl) throw new Error('Link não obtido');
@@ -729,7 +719,7 @@ try {
         console.log(`[PROXY TV] Link directo detetado: ${possibleUrl.substring(0, 50)}...`);
         cleanUrl = possibleUrl;
     } else {
-        const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&long_lived=1&JsHttpRequest=1-0`;
+        const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
         const linkRes = await axios.get(linkUrl, addon.getAxiosOpts(configData, { headers: auth.authData.headers }));
         let streamUrl = linkRes.data?.js?.cmd || linkRes.data?.js || linkRes.data?.cmd;
         if (!streamUrl || typeof streamUrl !== 'string') {
@@ -757,77 +747,6 @@ try {
         console.error("[PROXY] Erro geral do router:", e.message);
         if (!res.headersSent) res.status(500).end();
     }
-});
-// Rota persistente (STBEmu real) – usa a mesma lógica do proxy normal
-app.get("/live/:config/:listIdx/:channelId", async (req, res) => {
-    const { config, listIdx, channelId } = req.params;
-    const type = req.query.type || 'tv';
-    const lists = addon.parseConfig(config);
-    const configData = lists[listIdx];
-    if (!configData) return res.status(400).end();
-
-    // Apenas TV Stalker por enquanto (Xtream/M3U pode ser adicionado depois)
-    if (configData.type === 'xtream') {
-        // Comportamento para Xtream – igual ao proxy normal mas com pipe contínuo
-        // ... (podes copiar o bloco xtream que já tens e adaptar para pipe)
-        return;
-    }
-
-    if (type === 'movie' || type === 'series') {
-        // VOD não precisa de persistente – redireciona para o proxy normal
-        return res.redirect(302, `/proxy/${config}/${listIdx}/${channelId}?type=${type}`);
-    }
-
-    // TV Stalker – modo persistente
-    console.log(`[LIVE] Novo pedido persistente para ${configData.url} / ${channelId}`);
-
-    // Reutiliza as mesmas funções do proxy normal
-    const streamKey = `${configData.url}_${channelId}`;
-
-    // Se já existe um broadcaster ativo, liga o cliente a ele
-    if (global.activeTvStreams && global.activeTvStreams[streamKey]) {
-        const cached = global.activeTvStreams[streamKey];
-        console.log(`[LIVE] Reconexão a broadcaster existente.`);
-        res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Connection': 'keep-alive', 'Access-Control-Allow-Origin': '*' });
-        cached.broadcaster.pipe(res);
-        cached.clients.add(res);
-        req.on('close', () => {
-            cached.clients.delete(res);
-            cached.broadcaster.unpipe(res);
-            if (cached.clients.size === 0) {
-                // Agenda limpeza após 30s de inatividade
-                if (cached.timeout) clearTimeout(cached.timeout);
-                cached.timeout = setTimeout(() => {
-                    if (global.activeTvStreams[streamKey]?.clients?.size === 0) {
-                        if (cached.source?.destroy) cached.source.destroy();
-                        cached.broadcaster?.destroy();
-                        delete global.activeTvStreams[streamKey];
-                        console.log(`[LIVE] Broadcaster libertado após inatividade.`);
-                    }
-                }, 30000);
-            }
-        });
-        return;
-    }
-
-    // Se não há broadcaster, cria um novo pedido usando a mesma lógica do proxy
-    // Nota: precisamos de acesso às funções 'execStream', 'attemptReconnect', etc.
-    // Para isso, movemos essas funções para fora da rota '/proxy' (ou tornamo-las acessíveis globalmente).
-    // Como já estão definidas dentro da rota '/proxy', vamos extrair a lógica essencial.
-
-    // --- SOLUÇÃO RÁPIDA: redirecionar internamente para o proxy ---
-    // Simplesmente reencaminhamos o pedido para o proxy normal, mas mantendo o pipe.
-    // O proxy normal já faz tudo o que precisamos.
-    const proxyUrl = `/proxy/${config}/${listIdx}/${channelId}?type=${type}`;
-    const proxyReq = http.request({ hostname: '127.0.0.1', port: PORT, path: proxyUrl, method: 'GET' }, (proxyRes) => {
-        res.writeHead(proxyRes.statusCode, proxyRes.headers);
-        proxyRes.pipe(res);
-    });
-    proxyReq.on('error', (err) => {
-        console.error('[LIVE] Erro ao contactar proxy:', err.message);
-        if (!res.headersSent) res.status(500).end();
-    });
-    proxyReq.end();
 });
 
 app.listen(PORT, "0.0.0.0", () => console.log(`🚀 Addon Online na porta ${PORT}`));
