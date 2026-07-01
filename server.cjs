@@ -425,15 +425,25 @@ const execFfmpegLegacy = (urlToPlay, streamHeaders) => {
             .map(([k, v]) => `${k}: ${v}`)
             .join('\r\n') + '\r\n';
 
-        const ffmpeg = spawn('ffmpeg', [
+        // 👇 NOVO: determina qual proxy usar
+        const proxyUrl = configData.proxy || 'http://127.0.0.1:40000'; // fallback WARP
+
+        const ffmpegArgs = [
             '-headers', ffmpegHeaders,
-            '-re', // O Segredo do Ponto Doce para canais difíceis
+            '-re',
             '-i', urlToPlay,
             '-c', 'copy',
             '-f', 'mpegts',
             '-loglevel', 'error',
             'pipe:1'
-        ]);
+        ];
+
+        if (proxyUrl) {
+            ffmpegArgs.unshift('-http_proxy', proxyUrl);
+            console.log(`[PROXY TV] FFmpeg Legacy a usar proxy: ${proxyUrl}`);
+        }
+
+        const ffmpeg = spawn('ffmpeg', ffmpegArgs);
 
         ffmpeg.stdout.on('data', (chunk) => {
             if (!res.headersSent) {
@@ -536,35 +546,46 @@ const execStream = async (urlToPlay, isRetry = false) => {
     };
 
     const doFfmpegStream = () => {
-        const ffmpegHeaders = Object.entries({
-            ...rawHeaders,
-            'Cookie': cookieString,
-            'User-Agent': 'Mozilla/5.0 (Unknown; Linux armv7l) AppleWebKit/537.1+ (KHTML, like Gecko) Safari/537.1+ Stalker portal (0.5.66/0.5.66/1.0)',
-            'Referer': configData.url.replace(/\/$/, "") + "/c/",
-            'Accept': '*/*',
-            'Connection': 'keep-alive'
-        }).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
+    const ffmpegHeaders = Object.entries({
+        ...rawHeaders,
+        'Cookie': cookieString,
+        'User-Agent': 'Mozilla/5.0 (Unknown; Linux armv7l) AppleWebKit/537.1+ (KHTML, like Gecko) Safari/537.1+ Stalker portal (0.5.66/0.5.66/1.0)',
+        'Referer': configData.url.replace(/\/$/, "") + "/c/",
+        'Accept': '*/*',
+        'Connection': 'keep-alive'
+    }).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
 
-        const { spawn } = require('child_process');
-        const ffmpeg = spawn('ffmpeg', [
-            '-headers', ffmpegHeaders,
-            '-reconnect', '1',
-            '-reconnect_streamed', '1',
-            '-reconnect_delay_max', '5',
-            '-fflags', 'nobuffer+discardcorrupt+genpts',
-            '-err_detect', 'ignore_err',
-            '-i', urlToPlay,
-            '-c', 'copy',
-            '-f', 'mpegts',
-            '-loglevel', 'error',
-            'pipe:1'
-        ]);
+    const { spawn } = require('child_process');
 
-        const source = ffmpeg.stdout;
-        source.killProcess = () => { if (!ffmpeg.killed) ffmpeg.kill('SIGKILL'); };
-        ffmpeg.on('error', () => { if (!source.destroyed) source.destroy(); });
-        return source;
-    };
+    // 👇 NOVO: proxy
+    const proxyUrl = configData.proxy || 'http://127.0.0.1:40000';
+
+    const ffmpegArgs = [
+        '-headers', ffmpegHeaders,
+        '-reconnect', '1',
+        '-reconnect_streamed', '1',
+        '-reconnect_delay_max', '5',
+        '-fflags', 'nobuffer+discardcorrupt+genpts',
+        '-err_detect', 'ignore_err',
+        '-i', urlToPlay,
+        '-c', 'copy',
+        '-f', 'mpegts',
+        '-loglevel', 'error',
+        'pipe:1'
+    ];
+
+    if (proxyUrl) {
+        ffmpegArgs.unshift('-http_proxy', proxyUrl);
+        console.log(`[PROXY TV] FFmpeg Moderno a usar proxy: ${proxyUrl}`);
+    }
+
+    const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+
+    const source = ffmpeg.stdout;
+    source.killProcess = () => { if (!ffmpeg.killed) ffmpeg.kill('SIGKILL'); };
+    ffmpeg.on('error', () => { if (!source.destroyed) source.destroy(); });
+    return source;
+};
 
     try {
         let source;
