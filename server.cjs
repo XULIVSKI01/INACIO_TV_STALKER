@@ -1,4 +1,4 @@
-// server.cjs 10 Junho streams estaveis ponto doce!!!
+// server.cjs 10 Junho streams estaveis ponto doce + Auto-Deteção Inteligente (BRAIN)
 
 const express = require("express");
 const cors = require("cors");
@@ -356,7 +356,7 @@ app.get("/proxy/:config/:listIdx/:channelId", async (req, res) => {
             return;
         }
 
-// ----- TV STALKER (COM ESCUDO DE RECONEXÃO AUTOMÁTICA) -----
+// ----- TV STALKER (COM ESCUDO DE RECONEXÃO AUTOMÁTICA E CÉREBRO DE DETEÇÃO) -----
 const streamKey = `${configData.url}_${channelId}`;
 
 if (!global.activeTvStreams) global.activeTvStreams = {};
@@ -407,7 +407,7 @@ const isDirectLink = (possibleUrl.startsWith('http://') || possibleUrl.startsWit
 
 // Funções internas
 let reconnectAttempts = 0;
-const MAX_RECONNECT = 5; // aumentar um pouco para dar mais oportunidades
+const MAX_RECONNECT = 5; 
 
 const sendError = (msg) => {
     if (!res.headersSent) {
@@ -427,7 +427,7 @@ const execFfmpegLegacy = (urlToPlay, streamHeaders) => {
 
         const ffmpeg = spawn('ffmpeg', [
             '-headers', ffmpegHeaders,
-            '-re',
+            '-re', // O Segredo do Ponto Doce para canais difíceis
             '-i', urlToPlay,
             '-c', 'copy',
             '-f', 'mpegts',
@@ -470,14 +470,57 @@ const execStream = async (urlToPlay, isRetry = false) => {
         global.linkAttempts[streamKey]++;
     }
 
-    // Se o comando original contém 'ffmpeg', usamos o ffmpeg
+    // =================================================================
+    // 🧠 LÓGICA DE AUTO-DETEÇÃO E DISTRIBUIÇÃO DE ROTAS (O CÉREBRO)
+    // =================================================================
     const useFfmpeg = stalkerCmd.trim().toLowerCase().startsWith('ffmpeg');
     const isFfmpegLocal = useFfmpeg && (stalkerCmd.includes('localhost') || stalkerCmd.includes('127.0.0.1'));
+    
+    const urlLower = configData.url.toLowerCase();
+    const isLegacyPortal = urlLower.includes('newpear') || urlLower.includes('repolho') || urlLower.includes('achoquesim') || urlLower.includes('bonky');
 
+    // Decide se precisa do pipeline especial estrito
+    const needsLegacy = isLegacyPortal;
+
+    // Extração robusta de cookies (Corrige MAG_TOKEN_INVALID para qualquer cenário)
+    const rawHeaders = auth.authData.headers || {};
+    const cookieString = rawHeaders['Cookie'] || rawHeaders['cookie'] || "";
+
+    // 🔴 ROTA A: PIPELINE LEGACY
+    if (needsLegacy) {
+        // Correção: usando apenas urlToPlay que é o argumento garantido da função
+        console.log(`[PROXY TV] 🧠 Auto-Deteção: Pipeline LEGACY ativado para -> ${urlToPlay}`);
+        try {
+            const legacyHeaders = {
+                ...rawHeaders,
+                'Cookie': cookieString,
+                'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
+                'Referer': configData.url.replace(/\/$/, "") + "/c/",
+                'Accept': '*/*',
+                'Connection': 'keep-alive'
+            };
+            
+            const code = await execFfmpegLegacy(urlToPlay, legacyHeaders);
+            if (code !== 0 && !res.headersSent) {
+                console.log(`[PROXY TV] Legacy FFmpeg falhou. A fazer redirect de segurança...`);
+                res.setHeader('Accept-Ranges', 'none');
+                res.setHeader('Connection', 'close');
+                res.redirect(302, urlToPlay);
+            }
+            return;
+        } catch (err) {
+            console.error(`[PROXY TV] Erro no pipeline legacy: ${err.message}`);
+            if (!res.headersSent) res.status(502).end();
+            return;
+        }
+    }
+
+    // 🟢 ROTA B: PIPELINE MODERNO (Multiplexador Broadcaster, auto-reconnect)
+    console.log(`[PROXY TV] 🧠 Auto-Deteção: Pipeline MODERNO selecionado para -> ${urlToPlay}`);
     const doAxiosStream = async () => {
-        console.log(`[PROXY TV] A iniciar Pipeline Axios...`);
         const streamHeaders = {
-            ...auth.authData.headers,
+            ...rawHeaders,
+            'Cookie': cookieString,
             'Referer': configData.url.replace(/\/$/, "") + "/c/",
             'Accept': '*/*',
             'Connection': 'keep-alive'
@@ -493,64 +536,35 @@ const execStream = async (urlToPlay, isRetry = false) => {
     };
 
     const doFfmpegStream = () => {
-        console.log(`[PROXY TV] A iniciar Pipeline FFmpeg...`);
-        const { spawn } = require('child_process');
         const ffmpegHeaders = Object.entries({
-            ...auth.authData.headers,
+            ...rawHeaders,
+            'Cookie': cookieString,
+            'User-Agent': 'Mozilla/5.0 (Unknown; Linux armv7l) AppleWebKit/537.1+ (KHTML, like Gecko) Safari/537.1+ Stalker portal (0.5.66/0.5.66/1.0)',
             'Referer': configData.url.replace(/\/$/, "") + "/c/",
             'Accept': '*/*',
             'Connection': 'keep-alive'
         }).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
 
-const ffmpeg = spawn('ffmpeg', [
-    '-headers', ffmpegHeaders,
-    '-re',
-    '-reconnect', '1',
-    '-reconnect_at_eof', '1',
-    '-reconnect_streamed', '1',
-    '-reconnect_delay_max', '5',
-    '-i', urlToPlay,
-    '-c', 'copy',
-    '-f', 'mpegts',
-    '-loglevel', 'error',
-    'pipe:1'
-]);
+        const { spawn } = require('child_process');
+        const ffmpeg = spawn('ffmpeg', [
+            '-headers', ffmpegHeaders,
+            '-reconnect', '1',
+            '-reconnect_streamed', '1',
+            '-reconnect_delay_max', '5',
+            '-fflags', 'nobuffer+discardcorrupt+genpts',
+            '-err_detect', 'ignore_err',
+            '-i', urlToPlay,
+            '-c', 'copy',
+            '-f', 'mpegts',
+            '-loglevel', 'error',
+            'pipe:1'
+        ]);
 
         const source = ffmpeg.stdout;
-        source.killProcess = () => {
-            if (!ffmpeg.killed) ffmpeg.kill('SIGKILL');
-        };
-        ffmpeg.on('error', () => {
-            if (!source.destroyed) source.destroy();
-        });
+        source.killProcess = () => { if (!ffmpeg.killed) ffmpeg.kill('SIGKILL'); };
+        ffmpeg.on('error', () => { if (!source.destroyed) source.destroy(); });
         return source;
     };
-
-    // Se for um comando ffmpeg localhost, usa o pipeline antigo (estável para Bonky)
-if (isFfmpegLocal) {
-    console.log(`[PROXY TV] A usar pipeline legacy para comando localhost...`);
-    try {
-        const streamHeaders = {
-            ...auth.authData.headers,
-            'Referer': configData.url.replace(/\/$/, "") + "/c/",
-            'Accept': '*/*',
-            'Connection': 'keep-alive'
-        };
-        const code = await execFfmpegLegacy(urlToPlay, streamHeaders);
-        if (code !== 0 && !res.headersSent) {
-            // Tenta redirect como fallback (comportamento antigo)
-            console.log(`[PROXY TV] Legacy FFmpeg falhou. A fazer redirect...`);
-            res.setHeader('Accept-Ranges', 'none');
-            res.setHeader('Connection', 'close');
-            res.redirect(302, urlToPlay);
-        }
-        return;
-    } catch (err) {
-        console.error(`[PROXY TV] Erro no pipeline legacy: ${err.message}`);
-        if (!res.headersSent) res.status(502).end();
-        return;
-    }
-}
 
     try {
         let source;
@@ -605,25 +619,25 @@ if (isFfmpegLocal) {
             await attemptReconnect();
         });
 
-req.on('close', () => {
-    const cached = global.activeTvStreams[streamKey];
-    if (cached) {
-        cached.clients.delete(res);
-        cached.broadcaster.unpipe(res);
-        if (cached.clients.size === 0) {
-            console.log(`[PROXY TV] Stremio pausou. A manter ligação ativa por 10 minutos...`);
-            if (cached.timeout) clearTimeout(cached.timeout);
-            cached.timeout = setTimeout(() => {
-                if (cached.clients && cached.clients.size === 0) {
-                    console.log(`[PROXY TV] Ligação libertada após 10 min de inatividade.`);
-                    if (cached.source && cached.source.destroy) cached.source.destroy();
-                    if (cached.broadcaster) cached.broadcaster.destroy();
-                    delete global.activeTvStreams[streamKey];
+        req.on('close', () => {
+            const cached = global.activeTvStreams[streamKey];
+            if (cached) {
+                cached.clients.delete(res);
+                cached.broadcaster.unpipe(res);
+                if (cached.clients.size === 0) {
+                    console.log(`[PROXY TV] Stremio pausou. A manter ligação ativa por 10 minutos...`);
+                    if (cached.timeout) clearTimeout(cached.timeout);
+                    cached.timeout = setTimeout(() => {
+                        if (cached.clients && cached.clients.size === 0) {
+                            console.log(`[PROXY TV] Ligação libertada após 10 min de inatividade.`);
+                            if (cached.source && cached.source.destroy) cached.source.destroy();
+                            if (cached.broadcaster) cached.broadcaster.destroy();
+                            delete global.activeTvStreams[streamKey];
+                        }
+                    }, 10 * 60 * 1000); // 10 minutos
                 }
-            }, 10 * 60 * 1000); // 10 minutos
-        }
-    }
-});
+            }
+        });
 
     } catch (e) {
         console.error(`[PROXY TV] Erro na ligação: ${e.message}`);
@@ -634,7 +648,6 @@ req.on('close', () => {
                 if (newAuth) {
                     auth = newAuth;
                     if (isDirectLink) {
-                        // Para links diretos, não faz create_link; apenas repete o último URL bom
                         const lastUrl = global.lastGoodUrl[streamKey] || possibleUrl;
                         return execStream(lastUrl, true);
                     } else {
@@ -671,17 +684,14 @@ async function attemptReconnect() {
     console.log(`[PROXY TV] Tentativa de reconexão ${reconnectAttempts}/${MAX_RECONNECT}...`);
 
     try {
-        // Se for um link direto, tenta reutilizá‑lo com atraso progressivo
         if (isDirectLink) {
             const lastUrl = global.lastGoodUrl[streamKey] || possibleUrl;
             console.log(`[PROXY TV] A reutilizar link direto (tentativa ${reconnectAttempts})...`);
-            // Atraso progressivo para evitar rejeição imediata do servidor
-            const delay = Math.min(1000 * reconnectAttempts, 4000); // 1s, 2s, 3s, 4s...
+            const delay = Math.min(1000 * reconnectAttempts, 4000); 
             await new Promise(resolve => setTimeout(resolve, delay));
             return execStream(lastUrl, true);
         }
 
-        // Para comandos que não são links diretos (ex: IDs internos)
         const newAuth = await addon.authenticate(configData);
         if (!newAuth) throw new Error('Falha na autenticação');
         auth = newAuth;
