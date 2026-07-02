@@ -17,7 +17,7 @@ COPY . .
 # Inicia o WARP em modo proxy e depois o addon
 CMD sh -c "warp-svc & \
            sleep 2 && \
-           warp-cli register 2>/dev/null || true && \
+           warp-cli register --accept-tos 2>/dev/null || true && \
            warp-cli mode proxy && \
            warp-cli connect && \
            sleep 5 && \
