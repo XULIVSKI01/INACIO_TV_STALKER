@@ -17,7 +17,10 @@ COPY . .
 # Inicia o WARP em modo proxy e depois o addon
 CMD sh -c "warp-svc & \
            sleep 2 && \
-           warp-cli connect --accept-tos && \
+           export WARP_ACCEPT_TOS=yes && \
+           warp-cli register && \
+           warp-cli mode proxy && \
+           warp-cli connect && \
            sleep 5 && \
            echo '=== WARP STATUS ===' && \
            warp-cli status && \
