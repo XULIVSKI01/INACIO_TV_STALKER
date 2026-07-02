@@ -17,7 +17,8 @@ COPY . .
 # Inicia o WARP em modo proxy e depois o addon
 CMD sh -c "warp-svc & \
            sleep 2 && \
-           export WARP_ACCEPT_TOS=yes && \
+           mkdir -p /var/lib/cloudflare-warp && \
+           echo '{\"accept-tos\": true}' > /var/lib/cloudflare-warp/conf.json && \
            warp-cli register && \
            warp-cli mode proxy && \
            warp-cli connect && \
