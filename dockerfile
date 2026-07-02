@@ -16,7 +16,7 @@ COPY . .
 
 # Inicia o WARP em modo proxy e depois o addon
 CMD sh -c "warp-cli register 2>/dev/null || true && \
-           warp-cli set-mode proxy && \
+           warp-cli mode proxy && \
            warp-cli connect && \
            sleep 5 && \
            echo '=== WARP STATUS ===' && \
