@@ -23,4 +23,4 @@ RUN warp-cli register && \
 EXPOSE 7860
 
 # Comando de arranque: mantém o WARP ligado e inicia o addon
-CMD sh -c "warp-cli connect && sleep 5 && node server.cjs"
+CMD sh -c "warp-cli connect && sleep 5 && echo '=== WARP STATUS ===' && warp-cli status && echo '=== WARP IP ===' && curl --proxy http://127.0.0.1:40000 http://ifconfig.me && node server.cjs"
