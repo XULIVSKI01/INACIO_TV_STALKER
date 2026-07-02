@@ -18,7 +18,13 @@ CMD sh -c "warp-svc & \
            export WARP_ACCEPT_TOS=yes && \
            warp-cli mode proxy && \
            warp-cli connect && \
-           sleep 5 && \
+           echo 'Waiting for WARP (up to 30s)...' && \
+           for i in 1 2 3 4 5 6; do \
+             sleep 5; \
+             if warp-cli status | grep -q 'Connected'; then \
+               break; \
+             fi; \
+           done && \
            echo '=== WARP STATUS ===' && \
            warp-cli status && \
            echo '=== WARP IP ===' && \
