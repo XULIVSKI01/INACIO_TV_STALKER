@@ -15,7 +15,9 @@ RUN npm install
 COPY . .
 
 # Inicia o WARP em modo proxy e depois o addon
-CMD sh -c "warp-cli register 2>/dev/null || true && \
+CMD sh -c "warp-svc & \
+           sleep 2 && \
+           warp-cli register 2>/dev/null || true && \
            warp-cli mode proxy && \
            warp-cli connect && \
            sleep 5 && \
