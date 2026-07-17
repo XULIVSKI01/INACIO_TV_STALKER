@@ -71,6 +71,43 @@ async function authenticate(config, proxyUrl = null) {
         }
     }
 
+// Fallback clássico (método antigo, sem IP falso)
+console.log(`[AUTH] Caminhos modernos falharam. A tentar método clássico...`);
+const classicBase = cleanBase.replace(/\/c$/, '');
+const classicPaths = ['/c/portal.php', '/stalker_portal/c/portal.php', '/portal.php', '/server/load.php'];
+
+for (const path of classicPaths) {
+    const fullUrl = `${classicBase}${path}?`;
+    try {
+        const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
+        const classicHeaders = {
+            'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
+            'Referer': `${classicBase}/c/`,
+            'Accept': '*/*',
+            'Connection': 'keep-alive',
+            'Cookie': `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe/Lisbon;`
+        };
+        const res = await axios.get(handshakeUrl, getAxiosOpts(config, { headers: classicHeaders, timeout: 8000 }, proxyUrl));
+        let data = res.data;
+        if (typeof data === 'string') data = JSON.parse(data.replace(/\/\*[\s\S]*?\*\//g, "").trim());
+        if (data?.js?.token) {
+            const token = data.js.token;
+            console.log(`[AUTH SUCCESS] Clássico funcionou em: ${path}`);
+            classicHeaders.Authorization = `Bearer ${token}`;
+            classicHeaders.Cookie += ` token=${token}; access_token=${token};`;
+            const result = {
+                api: `${classicBase}${path}?`,
+                apiAlt: `${classicBase}/server/load.php?`,
+                token,
+                authData: { sn: data.js.sn || classicHeaders.sn, headers: classicHeaders }
+            };
+            authCache.set(cacheKey, { data: result, timestamp: Date.now() });
+            return result;
+        }
+    } catch (e) {
+        console.warn(`[AUTH SCAN] Clássico recusado em ${path} (${e.message})`);
+    }
+}
     console.error(`[AUTH FATAL] Nenhum caminho ou perfil funcionou para este MAC.`);
     return null;
 }
