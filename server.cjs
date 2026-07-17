@@ -895,11 +895,7 @@ if (!auth) {
         }
     }
     console.log(`[PROXY TV] Link obtido do portal: ${cleanUrl}`);
-if (cleanUrl && cleanUrl.includes('play_token')) {
-    console.log(`[PROXY TV] play_token detetado, redirecionando...`);
-    return res.redirect(302, cleanUrl);
-}
-execStream(cleanUrl);
+    execStream(cleanUrl);
 } catch (e) {
     console.error("[PROXY] Erro interno no pipe TV:", e.message);
     delete global.pendingTvPromises[streamKey];
