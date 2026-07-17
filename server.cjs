@@ -871,10 +871,11 @@ async function attemptReconnect() {
 // Início da lógica de obtenção do primeiro link
 try {
     auth = await engine.authenticate(configData, configData.proxy);
-    if (!auth) {
-        delete global.pendingTvPromises[streamKey];
-        return res.status(401).end();
-    }
+if (!auth) {
+    console.error(`[PROXY] Falha na autenticação Stalker para ${configData.url}`);
+    delete global.pendingTvPromises[streamKey];
+    return res.status(401).end();
+}
 
     let cleanUrl = null;
     if (isDirectLink) {
