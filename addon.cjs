@@ -219,6 +219,7 @@ if (uniqueSer.length > 0) {
     },
     
     async getCatalog(type, id, extra, configBase64) {
+        const normalize = (str) => (str || '').replace(/\s+/g, ' ').trim().toLowerCase();
         console.log(`[CATALOG] Pedido: type=${type}, id=${id}, genre=${extra.genre || 'N/A'}, skip=${extra.skip || 0}`);
         const lists = this.parseConfig(configBase64);
         const lIdx = parseInt(id.split('_')[1]);
@@ -255,7 +256,7 @@ if (uniqueSer.length > 0) {
                     if (effectiveGenre) {
                         const cAct = type === "tv" ? "get_live_categories" : (type === "movie" ? "get_vod_categories" : "get_series_categories");
                         const cRes = await axios.get(`${api}&action=${cAct}`, this.getAxiosOpts(config, {timeout: 5000}));
-                        const cat = (cRes.data || []).find(c => c.category_name === effectiveGenre);
+                        const cat = (cRes.data || []).find(c => normalize(c.category_name) === normalize(effectiveGenre));
                         if (cat) act += `&category_id=${cat.category_id}`;
                     }
                     const res = await axios.get(`${api}&action=${act}`, this.getAxiosOpts(config, {timeout: 10000}));
@@ -297,7 +298,7 @@ if (uniqueSer.length > 0) {
                                     if (tempCats.length > 0) { cats = tempCats; break; }
                                 } catch(e) { continue; }
                             }
-                            const cat = cats.find(c => (c.title || c.name) === effectiveGenre);
+                            const cat = cats.find(c => normalize(c.title || c.name) === normalize(effectiveGenre));
                             if (cat) catP = sType === "itv" ? `&genre=${cat.id}` : `&category=${cat.id}`;
                         }
                         let sAct = "get_ordered_list"; 
