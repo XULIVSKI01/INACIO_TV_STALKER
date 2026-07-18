@@ -763,7 +763,7 @@ const execStream = async (urlToPlay, isRetry = false) => {
 
     for (const method of methods) {
         try {
-            const result = await method.fn();
+            const result = await method();
             if (result && result.source) {
                 source = result.source;
                 usedMethod = result.method;
