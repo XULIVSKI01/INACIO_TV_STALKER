@@ -3,6 +3,7 @@ const express = require("express");
 const cors = require("cors");
 const axios = require("axios");
 const { PassThrough } = require('stream');
+const { spawn } = require('child_process');
 const engine = require("./stalkerengine.cjs");
 const addon = require("./addon.cjs");
 
@@ -568,7 +569,7 @@ if (configData.type === 'm3u') {
             return;
         }
 
-        // ========== TV STALKER (Lógica do 1º repositório) ==========
+        // ========== TV STALKER ==========
 const streamKey = `${configData.url}_${channelId}`;
 
 if (!global.activeTvStreams) global.activeTvStreams = {};
@@ -643,7 +644,7 @@ const sendError = (msg) => {
     setTimeout(() => { delete global.linkAttempts[streamKey]; }, 60000);
 };
 
-// ---- Funções de pipeline copiadas do 1º repositório ----
+// ---- Funções de pipeline ----
 const execFfmpegLegacy = (urlToPlay, streamHeaders) => {
     return new Promise((resolve, reject) => {
         const { spawn } = require('child_process');
@@ -677,79 +678,6 @@ const execFfmpegLegacy = (urlToPlay, streamHeaders) => {
     });
 };
 
-const execStream = async (urlToPlay, isRetry = false) => {
-    if (res.headersSent) return;
-    if (!isRetry) global.linkAttempts[streamKey]++;
-
-    const useFfmpeg = stalkerCmd.trim().toLowerCase().startsWith('ffmpeg');
-    const isFfmpegLocal = useFfmpeg && (stalkerCmd.includes('localhost') || stalkerCmd.includes('127.0.0.1'));
-
-    const rawHeaders = auth.authData.headers || {};
-const cookieString = rawHeaders['Cookie'] || '';
-
-// ---- Métodos de streaming por ordem de tentativa ----
-const tryModernStream = () => {
-    console.log(`[PROXY TV] 🧠 A tentar pipeline MODERNO...`);
-    const ffmpegHeaders = Object.entries({
-        ...rawHeaders,
-        'Cookie': cookieString,
-        'User-Agent': 'Mozilla/5.0 (Unknown; Linux armv7l) AppleWebKit/537.1+ (KHTML, like Gecko) Safari/537.1+ Stalker portal (0.5.66/0.5.66/1.0)',
-        'Referer': configData.url.replace(/\/$/, "") + "/c/",
-        'Accept': '*/*',
-        'Connection': 'keep-alive'
-    }).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
-
-    const { spawn } = require('child_process');
-    const ffmpeg = spawn('ffmpeg', [
-        '-headers', ffmpegHeaders,
-        '-reconnect', '1',
-        '-reconnect_streamed', '1',
-        '-reconnect_delay_max', '5',
-        '-fflags', 'nobuffer+discardcorrupt+genpts',
-        '-err_detect', 'ignore_err',
-        '-i', urlToPlay,
-        '-c', 'copy',
-        '-f', 'mpegts',
-        '-loglevel', 'error',
-        'pipe:1'
-    ]);
-
-    const source = ffmpeg.stdout;
-    source.killProcess = () => { if (!ffmpeg.killed) ffmpeg.kill('SIGKILL'); };
-    ffmpeg.on('error', () => { if (!source.destroyed) source.destroy(); });
-    return source; // pode lançar exceção se o spawn falhar
-};
-
-const tryAxiosStream = async () => {
-    console.log(`[PROXY TV] 🧠 A tentar pipeline Axios...`);
-    const streamHeaders = {
-        ...rawHeaders,
-        'Cookie': cookieString,
-        'Referer': configData.url.replace(/\/$/, "") + "/c/",
-        'Accept': '*/*',
-        'Connection': 'keep-alive'
-    };
-    const axiosOpts = addon.getAxiosOpts(configData, {
-        url: urlToPlay,
-        headers: streamHeaders,
-        responseType: 'stream',
-        decompress: false
-    });
-    const streamRes = await axios(axiosOpts);
-    return streamRes.data;
-};
-
-let source = null;
-
-// Se o URL contiver play_token, o pipeline LEGACY tem prioridade (como no 1º repositório)
-if (urlToPlay.includes('play_token')) {
-    console.log(`[PROXY TV] 🧠 play_token detetado. A tentar pipeline LEGACY primeiro...`);
-    const legacyHeaders = {
-        ...rawHeaders,
-        'Cookie': cookieString,
-        'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
-        'Referer': configData.url.replace(/\/$/, "") + "/c/",
-        'Accept': '*/*',
 const execStream = async (urlToPlay, isRetry = false) => {
     if (res.headersSent) return;
     if (!isRetry) global.linkAttempts[streamKey]++;
@@ -923,6 +851,7 @@ const execStream = async (urlToPlay, isRetry = false) => {
         }
     });
 };
+
 async function attemptReconnect() {
     if (reconnectAttempts >= MAX_RECONNECT) {
         if (global.activeTvStreams[streamKey]) {
@@ -962,11 +891,10 @@ async function attemptReconnect() {
 // Início da lógica de obtenção do primeiro link
 try {
     auth = await engine.authenticate(configData, configData.proxy);
-if (!auth) {
-    console.error(`[PROXY] Falha na autenticação Stalker para ${configData.url}`);
-    delete global.pendingTvPromises[streamKey];
-    return res.status(401).end();
-}
+    if (!auth) {
+        delete global.pendingTvPromises[streamKey];
+        return res.status(401).end();
+    }
 
     let cleanUrl = null;
     if (isDirectLink) {
