@@ -750,37 +750,130 @@ if (urlToPlay.includes('play_token')) {
         'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
         'Referer': configData.url.replace(/\/$/, "") + "/c/",
         'Accept': '*/*',
+const execStream = async (urlToPlay, isRetry = false) => {
+    if (res.headersSent) return;
+    if (!isRetry) global.linkAttempts[streamKey]++;
+
+    const rawHeaders = auth.authData.headers || {};
+    const cookieString = rawHeaders['Cookie'] || '';
+    const streamHeaders = {
+        ...rawHeaders,
+        'Cookie': cookieString,
+        'Referer': configData.url.replace(/\/$/, "") + "/c/",
+        'Accept': '*/*',
         'Connection': 'keep-alive'
     };
-    const code = await execFfmpegLegacy(urlToPlay, legacyHeaders);
-    if (code !== 0 && !res.headersSent) {
-        console.log(`[PROXY TV] Legacy FFmpeg falhou. A fazer redirect de segurança...`);
-        res.redirect(302, urlToPlay);
-    }
-    return; // LEGACY já escreveu a resposta (ou fez redirect)
-}
 
-// Tenta MODERNO → Axios (para outros casos)
-try {
-    source = tryModernStream();
-    console.log(`[PROXY TV] ✅ Pipeline MODERNO funcionou.`);
-} catch (err1) {
-    console.warn(`[PROXY TV] MODERNO falhou: ${err1.message}`);
-    try {
-        source = await tryAxiosStream();
-        console.log(`[PROXY TV] ✅ Pipeline Axios funcionou.`);
-    } catch (err2) {
-        console.warn(`[PROXY TV] Axios falhou: ${err2.message}`);
-        // Se ambos falharem, faz redirect
-        if (!res.headersSent) {
-            res.redirect(302, urlToPlay);
+    // Métodos por ordem: Axios (MODERNO) → FFmpeg moderno → FFmpeg legacy → redirect
+    const methods = [
+        async () => {
+            console.log(`[AUTO] Tentar Axios direto...`);
+            const opts = addon.getAxiosOpts(configData, {
+                url: urlToPlay,
+                headers: streamHeaders,
+                responseType: 'stream',
+                timeout: 8000
+            });
+            const response = await axios(opts);
+            return { source: response.data, method: 'axios' };
+        },
+        () => {
+            console.log(`[AUTO] Tentar FFmpeg moderno...`);
+            const ffmpegHeaders = Object.entries({
+                ...rawHeaders,
+                'Cookie': cookieString,
+                'User-Agent': 'Mozilla/5.0 (Unknown; Linux armv7l) AppleWebKit/537.1+ (KHTML, like Gecko) Safari/537.1+ Stalker portal (0.5.66/0.5.66/1.0)',
+                'Referer': configData.url.replace(/\/$/, "") + "/c/",
+                'Accept': '*/*',
+                'Connection': 'keep-alive'
+            }).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
+            const ffmpeg = spawn('ffmpeg', [
+                '-headers', ffmpegHeaders,
+                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
+                '-fflags', 'nobuffer+discardcorrupt+genpts',
+                '-err_detect', 'ignore_err',
+                '-i', urlToPlay,
+                '-c', 'copy',
+                '-f', 'mpegts',
+                '-loglevel', 'error',
+                'pipe:1'
+            ]);
+            const source = ffmpeg.stdout;
+            source.killProcess = () => { if (!ffmpeg.killed) ffmpeg.kill('SIGKILL'); };
+            ffmpeg.on('error', () => { if (!source.destroyed) source.destroy(); });
+            return { source, method: 'ffmpeg-modern' };
+        },
+        () => {
+            console.log(`[AUTO] Tentar FFmpeg Legacy...`);
+            const legacyHeaders = {
+                ...rawHeaders,
+                'Cookie': cookieString,
+                'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
+                'Referer': configData.url.replace(/\/$/, "") + "/c/",
+                'Accept': '*/*',
+                'Connection': 'keep-alive'
+            };
+            const hdrStr = Object.entries(legacyHeaders).map(([k,v]) => `${k}: ${v}`).join('\r\n') + '\r\n\r\n';
+            const ffmpeg = spawn('ffmpeg', [
+                '-headers', hdrStr,
+                '-re',
+                '-i', urlToPlay,
+                '-c', 'copy',
+                '-f', 'mpegts',
+                '-loglevel', 'error',
+                'pipe:1'
+            ]);
+            const source = ffmpeg.stdout;
+            source.killProcess = () => { if (!ffmpeg.killed) ffmpeg.kill('SIGKILL'); };
+            ffmpeg.on('error', () => { if (!source.destroyed) source.destroy(); });
+            return { source, method: 'ffmpeg-legacy' };
         }
+    ];
+
+    let source = null;
+    let usedMethod = '';
+
+    for (const method of methods) {
+        try {
+            const result = await method.fn();
+            if (result && result.source) {
+                source = result.source;
+                usedMethod = result.method;
+                break;
+            }
+        } catch (e) {
+            console.warn(`[AUTO] ${method.name || 'método'} falhou: ${e.message}`);
+            if (e.response && (e.response.status === 401 || e.response.status === 404)) {
+                console.log(`[AUTO] Erro ${e.response.status}. Renovando token...`);
+                try {
+                    const newAuth = await engine.authenticate(configData, configData.proxy);
+                    if (newAuth) {
+                        auth = newAuth;
+                        const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&long_lived=1&JsHttpRequest=1-0`;
+                        const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers }));
+                        let streamUrl = linkRes.data?.js?.cmd || linkRes.data?.js || linkRes.data?.cmd;
+                        if (streamUrl) {
+                            urlToPlay = streamUrl.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "").trim();
+                            if (!urlToPlay.startsWith('http')) {
+                                const basePortal = configData.url.split('/c/')[0];
+                                urlToPlay = basePortal + (urlToPlay.startsWith('/') ? '' : '/') + urlToPlay;
+                            }
+                        }
+                    }
+                } catch (ex) {
+                    console.warn(`[AUTO] Renovação de token falhou: ${ex.message}`);
+                }
+            }
+        }
+    }
+
+    if (!source) {
+        console.log(`[AUTO] Nenhum pipeline funcionou. Redirecionando...`);
+        if (!res.headersSent) res.redirect(302, urlToPlay);
         return;
     }
-}
 
-    // Se source é válido (MODERNO ou Axios funcionaram)
-if (source) {
+    console.log(`[AUTO] ✅ Pipeline selecionado: ${usedMethod}`);
     global.lastGoodUrl[streamKey] = urlToPlay;
 
     let broadcaster;
@@ -801,7 +894,6 @@ if (source) {
 
     resolveOutcome({ type: 'stream' });
     delete global.pendingTvPromises[streamKey];
-    reconnectAttempts = 0;
     global.linkAttempts[streamKey] = 0;
 
     source.on('end', async () => {
@@ -830,8 +922,7 @@ if (source) {
             }
         }
     });
-  }
-} 
+};
 async function attemptReconnect() {
     if (reconnectAttempts >= MAX_RECONNECT) {
         if (global.activeTvStreams[streamKey]) {
