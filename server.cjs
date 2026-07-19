@@ -759,45 +759,54 @@ const execStream = async (urlToPlay, isRetry = false) => {
     ];
 
     let source = null;
-    let usedMethod = '';
+let usedMethod = '';
+let redirectImmediately = false;
 
-    for (const method of methods) {
-        try {
-            const result = await method();
-            if (result && result.source) {
-                source = result.source;
-                usedMethod = result.method;
-                break;
-            }
-        } catch (e) {
-            console.warn(`[AUTO] ${method.name || 'método'} falhou: ${e.message}`);
-            if (e.response && (e.response.status === 401 || e.response.status === 404)) {
-                console.log(`[AUTO] Erro ${e.response.status}. Renovando token...`);
-                try {
-                    const newAuth = await engine.authenticate(configData, configData.proxy);
-                    if (newAuth) {
-                        auth = newAuth;
-                        const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&long_lived=1&JsHttpRequest=1-0`;
-                        const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers }));
-                        let streamUrl = linkRes.data?.js?.cmd || linkRes.data?.js || linkRes.data?.cmd;
-                        if (streamUrl) {
-                            urlToPlay = streamUrl.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "").trim();
-                            if (!urlToPlay.startsWith('http')) {
-                                const basePortal = configData.url.split('/c/')[0];
-                                urlToPlay = basePortal + (urlToPlay.startsWith('/') ? '' : '/') + urlToPlay;
-                            }
+// Se o primeiro método falhar com 404 e o link não tiver play_token, redirecionar imediatamente
+for (const method of methods) {
+    try {
+        const result = await method();
+        if (result && result.source) {
+            source = result.source;
+            usedMethod = result.method;
+            break;
+        }
+    } catch (e) {
+        console.warn(`[AUTO] ${method.name || 'método'} falhou: ${e.message}`);
+        // Se for o primeiro método (Axios) e falhar com 404, e o link não tiver play_token,
+        // assume que este servidor só funciona com redirect imediato.
+        if (method === methods[0] && e.response && e.response.status === 404 && !urlToPlay.includes('play_token')) {
+            console.log(`[AUTO] Servidor parece exigir redirect imediato. A redirecionar...`);
+            redirectImmediately = true;
+            break;
+        }
+        if (e.response && (e.response.status === 401 || e.response.status === 404)) {
+            console.log(`[AUTO] Erro ${e.response.status}. Renovando token...`);
+            try {
+                const newAuth = await engine.authenticate(configData, configData.proxy);
+                if (newAuth) {
+                    auth = newAuth;
+                    const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&long_lived=1&JsHttpRequest=1-0`;
+                    const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers }));
+                    let streamUrl = linkRes.data?.js?.cmd || linkRes.data?.js || linkRes.data?.cmd;
+                    if (streamUrl) {
+                        urlToPlay = streamUrl.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "").trim();
+                        if (!urlToPlay.startsWith('http')) {
+                            const basePortal = configData.url.split('/c/')[0];
+                            urlToPlay = basePortal + (urlToPlay.startsWith('/') ? '' : '/') + urlToPlay;
                         }
                     }
-                } catch (ex) {
-                    console.warn(`[AUTO] Renovação de token falhou: ${ex.message}`);
                 }
+            } catch (ex) {
+                console.warn(`[AUTO] Renovação de token falhou: ${ex.message}`);
             }
         }
     }
+}
 
-    if (!source) {
-    console.log(`[AUTO] Nenhum pipeline funcionou. A renovar token e redirecionar...`);
-    // Renova o token antes de redirecionar para garantir um link válido
+if (redirectImmediately || !source) {
+    console.log(`[AUTO] A redirecionar com token fresco...`);
+    // Renova o token antes de redirecionar
     try {
         const newAuth = await engine.authenticate(configData, configData.proxy);
         if (newAuth) {
