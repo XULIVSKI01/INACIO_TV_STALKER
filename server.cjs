@@ -41,7 +41,7 @@ app.get("/", (req, res) => res.redirect("/configure"));
 app.get("/configure", (req, res) => {
     res.send(`
         <!DOCTYPE html>
-        <html><head><title>𝕏-𝕋𝔸𝕃𝕂𝔼ℝ</title>
+        <html><head><title>𝕏𝕋𝔸𝕃𝕂𝔼ℝ 𝕀𝕀</title>
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
             body { font-family: sans-serif; background: #0c0d19; color: white; padding: 20px; }
