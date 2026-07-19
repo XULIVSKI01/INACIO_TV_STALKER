@@ -71,7 +71,7 @@ app.get("/configure", (req, res) => {
         </style></head>
         <body>
             <div class="container">
-                <h2 style="text-align:center">𝕀ℕ𝔸́ℂ𝕀𝕆 𝕋𝕍 𝕏-𝕋𝔸𝕃𝕂𝔼ℝ</h2>
+                <h2 style="text-align:center">𝕏𝕋𝔸𝕃𝕂𝔼ℝ 𝕀𝕀</h2>
                 <div id="lists-container"></div>
                 <button class="add-btn" onclick="addList()">+ Adicionar Nova Lista (Máx 5)</button>
                 <button class="categories-btn" onclick="openCategoryModal()">📋 Escolhe aqui as categorias</button>
