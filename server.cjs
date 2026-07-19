@@ -796,10 +796,29 @@ const execStream = async (urlToPlay, isRetry = false) => {
     }
 
     if (!source) {
-        console.log(`[AUTO] Nenhum pipeline funcionou. Redirecionando...`);
-        if (!res.headersSent) res.redirect(302, urlToPlay);
-        return;
+    console.log(`[AUTO] Nenhum pipeline funcionou. A renovar token e redirecionar...`);
+    // Renova o token antes de redirecionar para garantir um link válido
+    try {
+        const newAuth = await engine.authenticate(configData, configData.proxy);
+        if (newAuth) {
+            auth = newAuth;
+            const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&long_lived=1&JsHttpRequest=1-0`;
+            const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers }));
+            let streamUrl = linkRes.data?.js?.cmd || linkRes.data?.js || linkRes.data?.cmd;
+            if (streamUrl) {
+                urlToPlay = streamUrl.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "").trim();
+                if (!urlToPlay.startsWith('http')) {
+                    const basePortal = configData.url.split('/c/')[0];
+                    urlToPlay = basePortal + (urlToPlay.startsWith('/') ? '' : '/') + urlToPlay;
+                }
+            }
+        }
+    } catch (ex) {
+        console.warn(`[AUTO] Falha ao renovar token: ${ex.message}`);
     }
+    if (!res.headersSent) res.redirect(302, urlToPlay);
+    return;
+}
 
     console.log(`[AUTO] ✅ Pipeline selecionado: ${usedMethod}`);
     global.lastGoodUrl[streamKey] = urlToPlay;
