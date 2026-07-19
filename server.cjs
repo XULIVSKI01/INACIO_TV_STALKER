@@ -805,8 +805,7 @@ for (const method of methods) {
 }
 
 if (redirectImmediately || !source) {
-    console.log(`[AUTO] A redirecionar com token fresco...`);
-    // Renova o token antes de redirecionar
+    console.log(`[AUTO] Servidor exige redirect imediato. A tentar relay direto com token fresco...`);
     try {
         const newAuth = await engine.authenticate(configData, configData.proxy);
         if (newAuth) {
@@ -815,20 +814,58 @@ if (redirectImmediately || !source) {
             const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers }));
             let streamUrl = linkRes.data?.js?.cmd || linkRes.data?.js || linkRes.data?.cmd;
             if (streamUrl) {
-                urlToPlay = streamUrl.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "").trim();
-                if (!urlToPlay.startsWith('http')) {
+                const freshUrl = streamUrl.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "").trim();
+                if (!freshUrl.startsWith('http')) {
                     const basePortal = configData.url.split('/c/')[0];
-                    urlToPlay = basePortal + (urlToPlay.startsWith('/') ? '' : '/') + urlToPlay;
+                    freshUrl = basePortal + (freshUrl.startsWith('/') ? '' : '/') + freshUrl;
+                }
+                const opts = addon.getAxiosOpts(configData, {
+                    url: freshUrl,
+                    headers: {
+                        ...auth.authData.headers,
+                        'Referer': configData.url.replace(/\/$/, "") + "/c/",
+                        'Accept': '*/*',
+                        'Connection': 'keep-alive'
+                    },
+                    responseType: 'stream',
+                    timeout: 8000
+                });
+                const response = await axios(opts);
+                if (response && response.data) {
+                    source = response.data;
+                    usedMethod = 'axios-fresh';
+                    console.log(`[AUTO] ✅ Relay direto com token fresco funcionou.`);
                 }
             }
         }
-    } catch (ex) {
-        console.warn(`[AUTO] Falha ao renovar token: ${ex.message}`);
+    } catch (e) {
+        console.warn(`[AUTO] Relay direto com token fresco falhou: ${e.message}`);
     }
-    if (!res.headersSent) res.redirect(302, urlToPlay);
-    return;
-}
 
+    if (!source) {
+        console.log(`[AUTO] A redirecionar como último recurso...`);
+        try {
+            const newAuth = await engine.authenticate(configData, configData.proxy);
+            if (newAuth) {
+                auth = newAuth;
+                const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&long_lived=1&JsHttpRequest=1-0`;
+                const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers }));
+                let streamUrl = linkRes.data?.js?.cmd || linkRes.data?.js || linkRes.data?.cmd;
+                if (streamUrl) {
+                    urlToPlay = streamUrl.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "").trim();
+                    if (!urlToPlay.startsWith('http')) {
+                        const basePortal = configData.url.split('/c/')[0];
+                        urlToPlay = basePortal + (urlToPlay.startsWith('/') ? '' : '/') + urlToPlay;
+                    }
+                }
+            }
+        } catch (ex) {
+            console.warn(`[AUTO] Falha ao renovar token: ${ex.message}`);
+        }
+        if (!res.headersSent) res.redirect(302, urlToPlay);
+        return;
+    }
+}
     console.log(`[AUTO] ✅ Pipeline selecionado: ${usedMethod}`);
     global.lastGoodUrl[streamKey] = urlToPlay;
 
