@@ -348,8 +348,7 @@ app.get("/:config/stream/:type/:id.json", async (req, res) => {
 });
 
 // ROTA PRINCIPAL DO PROXY
-
-    const sessions = new engine.SessionManager();
+const sessions = new engine.SessionManager();
 
 app.get("/proxy/:config/:listIdx/:channelId", async (req, res) => {
     const { config, listIdx, channelId } = req.params;
@@ -357,30 +356,8 @@ app.get("/proxy/:config/:listIdx/:channelId", async (req, res) => {
     const lists = addon.parseConfig(config);
     const configData = lists[listIdx];
     if (!configData) return res.status(400).end();
-
-    // Instância local do Axios com proxy (se configurado)
-    const axiosProxy = axios.create();
-    if (configData.proxy) {
-        const proxyStr = configData.proxy.trim();
-        if (proxyStr.startsWith('socks')) {
-            const { SocksProxyAgent } = require('socks-proxy-agent');
-            const agent = new SocksProxyAgent(proxyStr);
-            agent.options.rejectUnauthorized = false;
-            axiosProxy.defaults.httpAgent = agent;
-            axiosProxy.defaults.httpsAgent = agent;
-        } else if (proxyStr.startsWith('http')) {
-            const p = new URL(proxyStr);
-            axiosProxy.defaults.proxy = {
-                protocol: p.protocol.replace(':', ''),
-                host: p.hostname,
-                port: parseInt(p.port),
-                auth: p.username ? { username: decodeURIComponent(p.username), password: decodeURIComponent(p.password) } : undefined
-            };
-        }
-    }
-
     console.log(`[PROXY TV] 🔔 Pedido recebido: tipo=${configData.type}, canal=${req.params.channelId}`);
-    
+
     try {
     // ----- M3U (direct relay) -----
 if (configData.type === 'm3u') {
@@ -395,7 +372,7 @@ if (configData.type === 'm3u') {
             },
             timeout: 30000
         });
-        const streamRes = await axiosProxy(axiosOpts);
+        const streamRes = await axios(axiosOpts);
         res.writeHead(200, {
             'Content-Type': streamRes.headers['content-type'] || 'video/mp2t',
             'Connection': 'keep-alive',
@@ -422,7 +399,7 @@ if (configData.type === 'm3u') {
     let sessionCookies = '';
     try {
         const authUrl = `${baseUrl}/player_api.php?username=${encodeURIComponent(configData.user)}&password=${encodeURIComponent(configData.pass)}`;
-        const authRes = await axiosProxy.get(authUrl, {
+        const authRes = await axios.get(authUrl, {
             headers: {
                 'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3'
             },
@@ -432,7 +409,7 @@ if (configData.type === 'm3u') {
         const setCookie = authRes.headers['set-cookie'];
         if (setCookie) {
             sessionCookies = Array.isArray(setCookie) ? setCookie.join('; ') : setCookie;
-}
+        }
     } catch (e) {
         console.warn(`[PROXY TV] Não foi possível obter cookies de sessão Xtream.`);
     }
@@ -456,7 +433,7 @@ if (configData.type === 'm3u') {
             responseType: 'stream',
             timeout: 30000
         });
-        const streamRes = await axiosProxy(axiosOpts);
+        const streamRes = await axios(axiosOpts);
 
         res.writeHead(200, {
             'Content-Type': streamRes.headers['content-type'] || 'video/mp2t',
@@ -518,7 +495,7 @@ if (configData.type === 'm3u') {
                     cleanUrl = possibleUrl;
                 } else {
                     const linkUrl = `${auth.api}type=vod&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}&long_lived=1&JsHttpRequest=1-0`;
-                    const linkRes = await axiosProxy.get(linkUrl, addon.getAxiosOpts(configData, { headers: auth.authData.headers }));
+                    const linkRes = await axios.get(linkUrl, addon.getAxiosOpts(configData, { headers: auth.authData.headers }));
                     let streamUrl = linkRes.data?.js?.cmd || linkRes.data?.js || linkRes.data?.cmd;
                     if (!streamUrl || typeof streamUrl !== 'string') return res.status(404).end();
 
@@ -551,7 +528,7 @@ if (configData.type === 'm3u') {
                     maxRedirects: 0,
                     validateStatus: () => true
                 });
-                const streamRes = await axiosProxy(axiosOpts);
+                const streamRes = await axios(axiosOpts);
 
                 if ([301, 302, 307, 308].includes(streamRes.status) && streamRes.headers.location) {
                     const finalUrl = streamRes.headers.location;
@@ -725,7 +702,7 @@ const execStream = async (urlToPlay, isRetry = false) => {
                 responseType: 'stream',
                 timeout: 8000
             });
-            const response = await axiosProxy(opts);
+            const response = await axios(opts);
             return { source: response.data, method: 'axios' };
         },
         () => {
@@ -810,7 +787,7 @@ for (const method of methods) {
                 if (newAuth) {
                     auth = newAuth;
                     const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&long_lived=1&JsHttpRequest=1-0`;
-                    const linkRes = await axiosProxy.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers }));
+                    const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers }));
                     let streamUrl = linkRes.data?.js?.cmd || linkRes.data?.js || linkRes.data?.cmd;
                     if (streamUrl) {
                         urlToPlay = streamUrl.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "").trim();
@@ -834,7 +811,7 @@ if (redirectImmediately || !source) {
         if (newAuth) {
             auth = newAuth;
             const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&long_lived=1&JsHttpRequest=1-0`;
-            const linkRes = await axiosProxy.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers }));
+            const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers }));
             let streamUrl = linkRes.data?.js?.cmd || linkRes.data?.js || linkRes.data?.cmd;
             if (streamUrl) {
                 const freshUrl = streamUrl.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "").trim();
@@ -853,7 +830,7 @@ if (redirectImmediately || !source) {
                     responseType: 'stream',
                     timeout: 8000
                 });
-                const response = await axiosProxy(opts);
+                const response = await axios(opts);
                 if (response && response.data) {
                     source = response.data;
                     usedMethod = 'axios-fresh';
@@ -872,7 +849,7 @@ if (redirectImmediately || !source) {
             if (newAuth) {
                 auth = newAuth;
                 const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&long_lived=1&JsHttpRequest=1-0`;
-                const linkRes = await axiosProxy.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers }));
+                const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers }));
                 let streamUrl = linkRes.data?.js?.cmd || linkRes.data?.js || linkRes.data?.cmd;
                 if (streamUrl) {
                     urlToPlay = streamUrl.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "").trim();
@@ -960,7 +937,7 @@ async function attemptReconnect() {
         if (!newAuth) throw new Error('Falha na autenticação');
         auth = newAuth;
         const linkUrl = `${newAuth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${newAuth.authData.sn}&token=${newAuth.token}&long_lived=1&JsHttpRequest=1-0`;
-        const linkRes = await axiosProxy.get(linkUrl, engine.getAxiosOpts(configData, { headers: newAuth.authData.headers }));
+        const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: newAuth.authData.headers }));
         let newStreamUrl = linkRes.data?.js?.cmd || linkRes.data?.js || linkRes.data?.cmd;
         if (!newStreamUrl) throw new Error('Link não obtido');
         let cUrl = newStreamUrl.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "").trim();
@@ -989,7 +966,7 @@ try {
         cleanUrl = possibleUrl;
     } else {
         const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&long_lived=1&JsHttpRequest=1-0`;
-        const linkRes = await axiosProxy.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers }));
+        const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers }));
         let streamUrl = linkRes.data?.js?.cmd || linkRes.data?.js || linkRes.data?.cmd;
         if (!streamUrl || typeof streamUrl !== 'string') {
             delete global.pendingTvPromises[streamKey];
@@ -1112,5 +1089,3 @@ seriesCategories = seriesCategories.filter(cat => !isUndesired(cat));
 });
 
 app.listen(PORT, "0.0.0.0", () => console.log(`🚀 Addon Online na porta ${PORT}`));
-
-
