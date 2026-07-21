@@ -348,8 +348,8 @@ app.get("/:config/stream/:type/:id.json", async (req, res) => {
 });
 
 // ROTA PRINCIPAL DO PROXY
-.join('; ') : setCookie;
-        }const sessions = new engine.SessionManager();
+
+    const sessions = new engine.SessionManager();
 
 app.get("/proxy/:config/:listIdx/:channelId", async (req, res) => {
     const { config, listIdx, channelId } = req.params;
@@ -395,7 +395,7 @@ if (configData.type === 'm3u') {
             },
             timeout: 30000
         });
-        const streamRes = await axios(axiosOpts);
+        const streamRes = await axiosProxy(axiosOpts);
         res.writeHead(200, {
             'Content-Type': streamRes.headers['content-type'] || 'video/mp2t',
             'Connection': 'keep-alive',
@@ -422,7 +422,7 @@ if (configData.type === 'm3u') {
     let sessionCookies = '';
     try {
         const authUrl = `${baseUrl}/player_api.php?username=${encodeURIComponent(configData.user)}&password=${encodeURIComponent(configData.pass)}`;
-        const authRes = await axios.get(authUrl, {
+        const authRes = await axiosProxy.get(authUrl, {
             headers: {
                 'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3'
             },
@@ -455,7 +455,7 @@ if (configData.type === 'm3u') {
             responseType: 'stream',
             timeout: 30000
         });
-        const streamRes = await axios(axiosOpts);
+        const streamRes = await axiosProxy(axiosOpts);
 
         res.writeHead(200, {
             'Content-Type': streamRes.headers['content-type'] || 'video/mp2t',
@@ -550,7 +550,7 @@ if (configData.type === 'm3u') {
                     maxRedirects: 0,
                     validateStatus: () => true
                 });
-                const streamRes = await axios(axiosOpts);
+                const streamRes = await axiosProxy(axiosOpts);
 
                 if ([301, 302, 307, 308].includes(streamRes.status) && streamRes.headers.location) {
                     const finalUrl = streamRes.headers.location;
@@ -809,7 +809,7 @@ for (const method of methods) {
                 if (newAuth) {
                     auth = newAuth;
                     const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&long_lived=1&JsHttpRequest=1-0`;
-                    const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers }));
+                    const linkRes = await axiosProxy.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers }));
                     let streamUrl = linkRes.data?.js?.cmd || linkRes.data?.js || linkRes.data?.cmd;
                     if (streamUrl) {
                         urlToPlay = streamUrl.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "").trim();
