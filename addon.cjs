@@ -670,23 +670,12 @@ if (uniqueSer.length > 0) {
 }
         
                                 // Se houver proxy configurado, forçar o stream a passar pelo proxy do addon
-const hasProxy = config?.proxy && config.proxy.trim().length > 0;
-if (hasProxy) {
-    // Remove o último stream adicionado (o Directo TV original) e substitui pelo proxy
-    if (directAdded && streams.length > 0) {
-        streams.pop(); // remove o Directo TV
-    }
-    const proxyTitle = (type === 'movie' ? '🎬 Directo Filme (via proxy)' : (type === 'series' ? `🍿 Directo Série (via proxy) - ${name}` : '⚡ Directo TV (via proxy)'));
+                        const useProxy = config?.useProxy !== false;
+if (useProxy) {
+    const hint = config?.streamHint || '';
+    const proxyTitle = (hint ? hint + ' ' : '') + 
+                       (type === 'movie' ? '🎬 Proxy Estável' : (type === 'series' ? `🍿 Proxy Estável - ${name}` : '🔄 Proxy Estável'));
     streams.push({ name: name, url: pUrl, title: proxyTitle, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
-} else {
-    // Sem proxy, oferece o Directo TV e o Proxy Estável como antes
-    const useProxy = config?.useProxy !== false;
-    if (useProxy) {
-        const hint = config?.streamHint || '';
-        const proxyTitle = (hint ? hint + ' ' : '') + 
-                           (type === 'movie' ? '🎬 Proxy Estável' : (type === 'series' ? `🍿 Proxy Estável - ${name}` : '🔄 Proxy Estável'));
-        streams.push({ name: name, url: pUrl, title: proxyTitle, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
-    }
 }
 return { streams };
     }
