@@ -670,12 +670,22 @@ if (uniqueSer.length > 0) {
 }
         
                                 // Se houver proxy configurado, forçar o stream a passar pelo proxy do addon
-                        const useProxy = config?.useProxy !== false;
-if (useProxy) {
+                        const hasProxy = config?.proxy && config.proxy.trim().length > 0;
+if (hasProxy) {
+    // Remove streams diretos (Directo TV, etc.) – mantém apenas M3U se existir
+    streams = streams.filter(s => s.title === '📺 Directo M3U');
     const hint = config?.streamHint || '';
     const proxyTitle = (hint ? hint + ' ' : '') + 
                        (type === 'movie' ? '🎬 Proxy Estável' : (type === 'series' ? `🍿 Proxy Estável - ${name}` : '🔄 Proxy Estável'));
     streams.push({ name: name, url: pUrl, title: proxyTitle, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+} else {
+    const useProxy = config?.useProxy !== false;
+    if (useProxy) {
+        const hint = config?.streamHint || '';
+        const proxyTitle = (hint ? hint + ' ' : '') + 
+                           (type === 'movie' ? '🎬 Proxy Estável' : (type === 'series' ? `🍿 Proxy Estável - ${name}` : '🔄 Proxy Estável'));
+        streams.push({ name: name, url: pUrl, title: proxyTitle, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+    }
 }
 return { streams };
     }
