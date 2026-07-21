@@ -431,7 +431,8 @@ if (configData.type === 'm3u') {
         });
         const setCookie = authRes.headers['set-cookie'];
         if (setCookie) {
-            sessionCookies = Array.isArray(setCookie) ? setCookie
+            sessionCookies = Array.isArray(setCookie) ? setCookie.join('; ') : setCookie;
+}
     } catch (e) {
         console.warn(`[PROXY TV] Não foi possível obter cookies de sessão Xtream.`);
     }
@@ -852,7 +853,7 @@ if (redirectImmediately || !source) {
                     responseType: 'stream',
                     timeout: 8000
                 });
-                const response = await axios(opts);
+                const response = await axiosProxy(opts);
                 if (response && response.data) {
                     source = response.data;
                     usedMethod = 'axios-fresh';
@@ -1048,8 +1049,7 @@ app.post("/get-categories", async (req, res) => {
         const lines = m3uRes.data.split('\n');
         const groups = new Set();
         for (const line of lines) {
-            if (line.startsWith('#EX
-                                TINF:')) {
+            if (line.startsWith('#EXTINF:')) {
                 const groupMatch = line.match(/group-title="([^"]+)"/);
                 if (groupMatch) groups.add(groupMatch[1]);
             }
