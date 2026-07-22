@@ -537,17 +537,53 @@ async function tryFfmpegExact(urlToPlay, auth, config, type, res, sessions, stre
     }
 }
 
+async function classicAuthenticate(config, proxyUrl = null) {
+    const mac = (config.mac || "00:1A:79:00:00:00").toUpperCase();
+    const cleanBase = config.url.trim().replace(/\/$/, "");
+    const classicBase = cleanBase.replace(/\/c$/, '');
+    const classicPaths = ['/c/portal.php', '/stalker_portal/c/portal.php', '/portal.php', '/server/load.php'];
+    const classicAuth = getStalkerAuth(config);
+    proxyUrl = proxyUrl || (config.proxy ? config.proxy.trim() : null);
+
+    for (const path of classicPaths) {
+        const fullUrl = `${classicBase}${path}?`;
+        try {
+            const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
+            const res = await axios.get(handshakeUrl, getAxiosOpts(config, { headers: classicAuth.headers, timeout: 8000 }, proxyUrl));
+            let data = res.data;
+            if (typeof data === 'string') data = JSON.parse(data.replace(/\/\*[\s\S]*?\*\//g, "").trim());
+            if (data?.js?.token) {
+                const token = data.js.token;
+                console.log(`[AUTH SUCCESS] Clássico forçado funcionou em: ${path}`);
+                classicAuth.headers.Authorization = `Bearer ${token}`;
+                classicAuth.headers.Cookie += ` token=${token}; access_token=${token};`;
+                const result = {
+                    api: `${classicBase}${path}?`,
+                    apiAlt: `${classicBase}/server/load.php?`,
+                    token,
+                    authData: { sn: data.js.sn || classicAuth.sn, headers: classicAuth.headers }
+                };
+                return result;
+            }
+        } catch (e) {
+            console.warn(`[AUTH SCAN] Clássico forçado recusado em ${path} (${e.message})`);
+        }
+    }
+    return null;
+}
+
 // ============================================================
 // EXPORTAÇÕES
 // ============================================================
 module.exports = {
     authenticate,
+    classicAuthenticate,   // 👈 adiciona esta linha
     createStreamLink,
     startFfmpegRelay,
     generateFiller,
     SessionManager,
     getAxiosOpts,
-    getStalkerAuth,   // 👈 esta linha
+    getStalkerAuth,
     authCache,
     CACHE_TTL,
     tryMultiplePipelines,
