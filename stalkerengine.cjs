@@ -10,7 +10,59 @@ const authCache = new Map();
 const CACHE_TTL = 10 * 60 * 1000;
 
 // ============================================================
-// 1. AUTENTICAÇÃO (copiada do addon.cjs, com suporte a proxy)
+// Função auxiliar para gerar cabeçalhos de box real (como no 1.º repo)
+// ============================================================
+function getStalkerAuth(config, token = '', sessionCookies = '') {
+    const mac = (config.mac || "00:1A:79:00:00:00").toUpperCase();
+    const seed = crypto.createHash('md5').update(mac || 'vazio').digest('hex').toUpperCase();
+    const sn  = config.sn  || seed.substring(0, 14); 
+    const id1 = config.id1 || seed; 
+    const sig = config.sig || "";
+    const model = config.model || "MAG250";
+    let ua = "", xua = "";
+    switch(model) {
+        case "MAG322":
+            ua = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 4 rev: 27211 Safari/533.3";
+            xua = `Model: MAG322; SW: 2.20.05-322; Device ID: ${id1}; Device ID 2: ${id1}; Signature: ${sig}`;
+            break;
+        case "MAG254":
+            ua = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 254 Safari/533.3";
+            xua = `Model: MAG254; SW: 0.2.18-r22; Device ID: ${id1}; Device ID 2: ${id1}; Signature: ${sig}`;
+            break;
+        case "MAG256":
+            ua = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 4 rev: 27211 Safari/533.3";
+            xua = `Model: MAG256; SW: 2.20.05-256; Device ID: ${id1}; Device ID 2: ${id1}; Signature: ${sig}`;
+            break;
+        default: 
+            ua = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3";
+            xua = `Model: MAG250; SW: 0.2.18-r14; Device ID: ${id1}; Device ID 2: ${id1}; Signature: ${sig}`;
+    }
+    let cookie = `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe/Lisbon;`;
+    if (sessionCookies) cookie += ` ${sessionCookies};`;
+    if (token) cookie += ` token=${token}; access_token=${token};`;
+    const baseUrl = config.url.replace(/\/$/, "").replace(/\/c$/, "");
+    return {
+        sn, id1, sig,
+        headers: {
+            "User-Agent": ua,
+            "X-User-Agent": xua,
+            "Cookie": cookie,
+            "Authorization": token ? `Bearer ${token}` : undefined,
+            "Referer": baseUrl + "/c/",
+            "Origin": baseUrl,
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9", 
+            "Accept-Encoding": "gzip, deflate",  
+            "X-Requested-With": "XMLHttpRequest",
+            "Pragma": "no-cache",
+            "Cache-Control": "no-cache",
+            "Connection": "Keep-Alive"
+        }
+    };
+}
+
+// ============================================================
+// 1. AUTENTICAÇÃO (com fallback clássico melhorado)
 // ============================================================
 async function authenticate(config, proxyUrl = null) {
     const mac = (config.mac || "00:1A:79:00:00:00").toUpperCase();
@@ -71,43 +123,38 @@ async function authenticate(config, proxyUrl = null) {
         }
     }
 
-// Fallback clássico (método antigo, sem IP falso)
-console.log(`[AUTH] Caminhos modernos falharam. A tentar método clássico...`);
-const classicBase = cleanBase.replace(/\/c$/, '');
-const classicPaths = ['/c/portal.php', '/stalker_portal/c/portal.php', '/portal.php', '/server/load.php'];
+    // Fallback clássico (método antigo, sem IP falso, mas com cabeçalhos completos)
+    console.log(`[AUTH] Caminhos modernos falharam. A tentar método clássico...`);
+    const classicBase = cleanBase.replace(/\/c$/, '');
+    const classicPaths = ['/c/portal.php', '/stalker_portal/c/portal.php', '/portal.php', '/server/load.php'];
+    const classicAuth = getStalkerAuth(config);
 
-for (const path of classicPaths) {
-    const fullUrl = `${classicBase}${path}?`;
-    try {
-        const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
-        const classicHeaders = {
-    'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
-    'Referer': `${classicBase}/c/`,
-    'Accept': '*/*',
-    'Connection': 'keep-alive',
-    'Cookie': `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe/Lisbon;`
-};
-        const res = await axios.get(handshakeUrl, getAxiosOpts(config, { headers: classicHeaders, timeout: 8000 }, proxyUrl));
-        let data = res.data;
-        if (typeof data === 'string') data = JSON.parse(data.replace(/\/\*[\s\S]*?\*\//g, "").trim());
-        if (data?.js?.token) {
-            const token = data.js.token;
-            console.log(`[AUTH SUCCESS] Clássico funcionou em: ${path}`);
-            classicHeaders.Authorization = `Bearer ${token}`;
-            classicHeaders.Cookie += ` token=${token}; access_token=${token};`;
-            const result = {
-                api: `${classicBase}${path}?`,
-                apiAlt: `${classicBase}/server/load.php?`,
-                token,
-                authData: { sn: data.js.sn || classicHeaders.sn, headers: classicHeaders }
-            };
-            authCache.set(cacheKey, { data: result, timestamp: Date.now() });
-            return result;
+    for (const path of classicPaths) {
+        const fullUrl = `${classicBase}${path}?`;
+        try {
+            const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
+            const res = await axios.get(handshakeUrl, getAxiosOpts(config, { headers: classicAuth.headers, timeout: 8000 }, proxyUrl));
+            let data = res.data;
+            if (typeof data === 'string') data = JSON.parse(data.replace(/\/\*[\s\S]*?\*\//g, "").trim());
+            if (data?.js?.token) {
+                const token = data.js.token;
+                console.log(`[AUTH SUCCESS] Clássico funcionou em: ${path}`);
+                classicAuth.headers.Authorization = `Bearer ${token}`;
+                classicAuth.headers.Cookie += ` token=${token}; access_token=${token};`;
+                const result = {
+                    api: `${classicBase}${path}?`,
+                    apiAlt: `${classicBase}/server/load.php?`,
+                    token,
+                    authData: { sn: data.js.sn || classicAuth.sn, headers: classicAuth.headers }
+                };
+                authCache.set(cacheKey, { data: result, timestamp: Date.now() });
+                return result;
+            }
+        } catch (e) {
+            console.warn(`[AUTH SCAN] Clássico recusado em ${path} (${e.message})`);
         }
-    } catch (e) {
-        console.warn(`[AUTH SCAN] Clássico recusado em ${path} (${e.message})`);
     }
-}
+
     console.error(`[AUTH FATAL] Nenhum caminho ou perfil funcionou para este MAC.`);
     return null;
 }
@@ -123,26 +170,22 @@ async function createStreamLink(auth, config, stalkerCmd, type, sNum = null) {
 
     const opts = getAxiosOpts(config, { headers: auth.authData.headers, timeout: 5000 }, config.proxy);
 
-    // Tentativa 1: comando original (cmd)
     let linkUrl = `${auth.api}type=${cmdType}&action=create_link&cmd=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0`;
     let res = await axios.get(linkUrl, opts).catch(() => ({}));
     let url = extractUrl(res.data?.js);
 
-    // Tentativa 2: video_id
     if (!url) {
         linkUrl = `${auth.api}type=${cmdType}&action=create_link&video_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0`;
         res = await axios.get(linkUrl, opts).catch(() => ({}));
         url = extractUrl(res.data?.js);
     }
 
-    // Tentativa 3: para séries
     if (!url && type === "series") {
         linkUrl = `${auth.api}type=series&action=create_link&video_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0`;
         res = await axios.get(linkUrl, opts).catch(() => ({}));
         url = extractUrl(res.data?.js);
     }
 
-    // Tentativa 4: movie_id (para filmes e séries)
     if (!url && (type === "series" || type === "movie")) {
         linkUrl = `${auth.api}type=vod&action=create_link&movie_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0`;
         res = await axios.get(linkUrl, opts).catch(() => ({}));
@@ -321,7 +364,7 @@ async function tryMultiplePipelines(cleanUrl, auth, config, type, res, sessions,
     if (cleanUrl.includes('play_token')) {
     console.log(`[AUTO-DETECT] play_token detetado. Prioridade: ffmpeg-exact (1º repo) > ffmpeg-legacy > ...`);
     methods = [
-        { name: 'ffmpeg-exact', fn: tryFfmpegExact },   // réplica exata do 1º repositório
+        { name: 'ffmpeg-exact', fn: tryFfmpegExact },
         { name: 'ffmpeg-legacy', fn: tryFfmpegStreamLegacy },
         { name: 'ffmpeg-modern', fn: tryFfmpegModernRelay },
         { name: 'legacy', fn: tryLegacyRelay },
@@ -421,7 +464,7 @@ async function tryFfmpegModernRelay(urlToPlay, auth, config, type, res, sessions
             'Referer': config.url + '/c/',
             'Connection': 'keep-alive'
         };
-        const source = startFfmpegRelay(urlToPlay, headersObj, config.proxy, false, null); // legacyMode = false
+        const source = startFfmpegRelay(urlToPlay, headersObj, config.proxy, false, null);
         return { success: true, source, method: 'ffmpeg-modern' };
     } catch (e) {
         return { success: false };
@@ -430,11 +473,10 @@ async function tryFfmpegModernRelay(urlToPlay, auth, config, type, res, sessions
 
 async function tryFfmpegStreamLegacy(urlToPlay, auth, config, type, res, sessions, streamKey, req) {
     try {
-        // Replica exatamente os headers que o 1º repositório enviava no doFfmpegStream
         const baseHeaders = auth.authData.headers || {};
         const ffmpegHeaders = {
-            ...baseHeaders,                               // inclui Authorization, X-User-Agent, etc.
-            'Cookie': baseHeaders['Cookie'] || '',       // garante que o cookie está presente
+            ...baseHeaders,
+            'Cookie': baseHeaders['Cookie'] || '',
             'User-Agent': 'Mozilla/5.0 (Unknown; Linux armv7l) AppleWebKit/537.1+ (KHTML, like Gecko) Safari/537.1+ Stalker portal (0.5.66/0.5.66/1.0)',
             'Referer': config.url + '/c/',
             'Accept': '*/*',
@@ -449,7 +491,6 @@ async function tryFfmpegStreamLegacy(urlToPlay, auth, config, type, res, session
 
 async function tryFfmpegExact(urlToPlay, auth, config, type, res, sessions, streamKey, req) {
     try {
-        // EXATAMENTE o mesmo código do doFfmpegStream do 1º repositório
         const rawHeaders = auth.authData.headers || {};
         const cookieString = rawHeaders['Cookie'] || '';
         const ffmpegHeaders = Object.entries({
@@ -476,8 +517,6 @@ async function tryFfmpegExact(urlToPlay, auth, config, type, res, sessions, stre
             'pipe:1'
         ];
 
-        // Se houver proxy HTTP, adiciona (mas o 1º repositório não usa proxy aqui; o user disse que funciona sem proxy)
-        // No entanto, para manter a compatibilidade, podemos adicionar a opção se existir proxyUrl.
         const proxyUrl = config.proxy || null;
         if (proxyUrl && proxyUrl.startsWith('http')) {
             ffmpegArgs.unshift('-http_proxy', proxyUrl);
@@ -490,8 +529,6 @@ async function tryFfmpegExact(urlToPlay, auth, config, type, res, sessions, stre
         });
         ffmpeg.on('close', (code) => {
             console.log(`[STALKER ENGINE] FFmpeg exato encerrado (código ${code}).`);
-            // Não chamamos onCloseCallback para evitar loops desnecessários;
-            // o tratamento de reconexão será feito pelo código que chamou este método.
         });
         source.kill = () => { if (!ffmpeg.killed) ffmpeg.kill('SIGKILL'); };
         return { success: true, source, method: 'ffmpeg-exact' };
