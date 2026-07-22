@@ -134,27 +134,38 @@ const addon = {
                     const auth = await engine.authenticate(l, l.proxy);                  if (auth) {
                         const fetchSt = async (t, a, fb) => {
                             try {
-                                let r;
-                                try {
-                                    r = await axios.get(`${auth.api}type=${t}&action=${a}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
-                                } catch (e) {
-                                    if (auth.apiAlt) {
-                                        r = await axios.get(`${auth.apiAlt}type=${t}&action=${a}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
-                                    } else throw e;
-                                }
-                                let items = r.data?.js?.data || r.data?.js || [];
-                                if ((!items || (Array.isArray(items) && items.length === 0)) && fb) {
-                                    try {
-                                        r = await axios.get(`${auth.api}type=${t}&action=${fb}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
-                                    } catch (e) {
-                                        if (auth.apiAlt) {
-                                            r = await axios.get(`${auth.apiAlt}type=${t}&action=${fb}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
-                                        } else throw e;
-                                    }
-                                    items = r.data?.js?.data || r.data?.js || [];
-                                }
-                                return (Array.isArray(items) ? items : Object.values(items)).map(g => g.title || g.name).filter(Boolean);
-                            } catch(e) { return []; }
+    let r;
+    // Tentativa 1: ação principal no api
+    try {
+        r = await axios.get(`${auth.api}type=${t}&action=${a}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
+    } catch (e) {
+        if (auth.apiAlt) {
+            r = await axios.get(`${auth.apiAlt}type=${t}&action=${a}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
+        } else throw e;
+    }
+
+    let items = r.data?.js?.data || r.data?.js || [];
+
+    // Se não veio nada e existe fallback, tenta com a ação de fallback (fb)
+    if ((!items || (Array.isArray(items) && items.length === 0)) && fb) {
+        try {
+            r = await axios.get(`${auth.api}type=${t}&action=${fb}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
+        } catch (e) {
+            if (auth.apiAlt) {
+                r = await axios.get(`${auth.apiAlt}type=${t}&action=${fb}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
+            } else throw e;
+        }
+        items = r.data?.js?.data || r.data?.js || [];
+    }
+
+    const rawItems = Array.isArray(items) ? items : Object.values(items);
+    const mapped = rawItems.map(g => g.title || g.name || g.category_name || g.number || g.id).filter(Boolean);
+    console.log(`[DEBUG CATEGORIES] Portal (${t}) devolveu ${mapped.length} categorias: ${JSON.stringify(mapped.slice(0, 3))}...`);
+    return mapped;
+} catch(e) {
+    console.warn(`[FETCHST ERROR] ${t}/${a}: ${e.message}`);
+    return [];
+}
                         };
                         const [g1, g2, g3] = await Promise.all([
                             fetchSt('itv', 'get_genres', 'get_categories'), 
