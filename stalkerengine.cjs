@@ -509,7 +509,6 @@ module.exports = {
     startFfmpegRelay,
     generateFiller,
     SessionManager,
-    getStalkerAuth,
     getAxiosOpts,
     authCache,
     CACHE_TTL,
