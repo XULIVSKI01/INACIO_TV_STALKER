@@ -539,58 +539,6 @@ async function tryFfmpegExact(urlToPlay, auth, config, type, res, sessions, stre
 }
 
 // ============================================================
-// FUNÇÃO AUXILIAR: GERAR CABEÇALHOS DE BOX REAL (como no 1.º repo)
-// ============================================================
-function getStalkerAuth(config, token = '', sessionCookies = '') {
-    const mac = (config.mac || "00:1A:79:00:00:00").toUpperCase();
-    const seed = crypto.createHash('md5').update(mac || 'vazio').digest('hex').toUpperCase();
-    const sn  = config.sn  || seed.substring(0, 14); 
-    const id1 = config.id1 || seed; 
-    const sig = config.sig || "";
-    const model = config.model || "MAG250";
-    let ua = "", xua = "";
-    switch(model) {
-        case "MAG322":
-            ua = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 4 rev: 27211 Safari/533.3";
-            xua = `Model: MAG322; SW: 2.20.05-322; Device ID: ${id1}; Device ID 2: ${id1}; Signature: ${sig}`;
-            break;
-        case "MAG254":
-            ua = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 254 Safari/533.3";
-            xua = `Model: MAG254; SW: 0.2.18-r22; Device ID: ${id1}; Device ID 2: ${id1}; Signature: ${sig}`;
-            break;
-        case "MAG256":
-            ua = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 4 rev: 27211 Safari/533.3";
-            xua = `Model: MAG256; SW: 2.20.05-256; Device ID: ${id1}; Device ID 2: ${id1}; Signature: ${sig}`;
-            break;
-        default: 
-            ua = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3";
-            xua = `Model: MAG250; SW: 0.2.18-r14; Device ID: ${id1}; Device ID 2: ${id1}; Signature: ${sig}`;
-    }
-    let cookie = `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe/Lisbon;`;
-    if (sessionCookies) cookie += ` ${sessionCookies};`;
-    if (token) cookie += ` token=${token}; access_token=${token};`;
-    const baseUrl = config.url.replace(/\/$/, "").replace(/\/c$/, "");
-    return {
-        sn, id1, sig,
-        headers: {
-            "User-Agent": ua,
-            "X-User-Agent": xua,
-            "Cookie": cookie,
-            "Authorization": token ? `Bearer ${token}` : undefined,
-            "Referer": baseUrl + "/c/",
-            "Origin": baseUrl,
-            "Accept": "*/*",
-            "Accept-Language": "en-US,en;q=0.9", 
-            "Accept-Encoding": "gzip, deflate",  
-            "X-Requested-With": "XMLHttpRequest",
-            "Pragma": "no-cache",
-            "Cache-Control": "no-cache",
-            "Connection": "Keep-Alive"
-        }
-    };
-}
-
-// ============================================================
 // EXPORTAÇÕES
 // ============================================================
 module.exports = {
