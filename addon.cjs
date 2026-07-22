@@ -133,88 +133,79 @@ const addon = {
                 } else {
                     const auth = await engine.authenticate(l, l.proxy);                  if (auth) {
                         const fetchSt = async (t, a, fb) => {
-    // Função interna que tenta uma ação com cabeçalhos específicos
-    const tryAction = async (action, headers) => {
+    try {
+        let r;
+        // Tentativa 1: ação principal com cabeçalhos modernos
         try {
-            const r = await axios.get(`${auth.api}type=${t}&action=${action}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers, timeout: 5000 }));
-            return r.data?.js?.data || r.data?.js || [];
+            r = await axios.get(`${auth.api}type=${t}&action=${a}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
         } catch (e) {
             if (auth.apiAlt) {
-                try {
-                    const r = await axios.get(`${auth.apiAlt}type=${t}&action=${action}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers, timeout: 5000 }));
-                    return r.data?.js?.data || r.data?.js || [];
-                } catch (e2) {}
-            }
-            throw e;
+                r = await axios.get(`${auth.apiAlt}type=${t}&action=${a}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
+            } else throw e;
         }
-    };
 
-    let items = [];
-    try {
-        // 1. Tenta ação principal com cabeçalhos modernos
-        items = await tryAction(a, auth.authData.headers);
-    } catch (e) {
-        // 2. Se falhar com 400, tenta ação principal com cabeçalhos clássicos
+        let items = r.data?.js?.data || r.data?.js || [];
+
+        // Se não veio nada e existe fallback, tenta com a ação de fallback (fb)
+        if ((!items || (Array.isArray(items) && items.length === 0)) && fb) {
+            try {
+                r = await axios.get(`${auth.api}type=${t}&action=${fb}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
+            } catch (e) {
+                if (auth.apiAlt) {
+                    r = await axios.get(`${auth.apiAlt}type=${t}&action=${fb}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
+                } else throw e;
+            }
+            items = r.data?.js?.data || r.data?.js || [];
+        }
+
+        return (Array.isArray(items) ? items : Object.values(items)).map(g => g.title || g.name).filter(Boolean);
+
+    } catch(e) {
+        // 🔥 Se for erro 400 e existir getStalkerAuth, repete tudo com cabeçalhos clássicos
         if (e.response && e.response.status === 400 && engine.getStalkerAuth) {
-            console.log(`[FETCHST] Erro 400 com headers modernos. A tentar com headers clássicos...`);
+            console.log(`[FETCHST] Erro 400 em ${t}/${a}. A tentar com cabeçalhos clássicos...`);
             try {
                 const classicAuth = engine.getStalkerAuth(l, auth.token, auth.authData.headers['Cookie'] || '');
                 const classicHeaders = { ...classicAuth.headers, Authorization: `Bearer ${auth.token}` };
-                items = await tryAction(a, classicHeaders);
-            } catch (e2) {
-                if (fb) {
-                    try {
-                        items = await tryAction(fb, auth.authData.headers);
-                    } catch (e3) {
-                        try {
-                            const classicAuth2 = engine.getStalkerAuth(l, auth.token, auth.authData.headers['Cookie'] || '');
-                            const classicHeaders2 = { ...classicAuth2.headers, Authorization: `Bearer ${auth.token}` };
-                            items = await tryAction(fb, classicHeaders2);
-                        } catch (e4) {
-                            console.warn(`[FETCHST ERROR] ${t}/${fb}: ${e4.message}`);
-                            return [];
-                        }
-                    }
-                } else {
-                    console.warn(`[FETCHST ERROR] ${t}/${a}: ${e2.message}`);
-                    return [];
+
+                // Ação principal com clássicos
+                let r2;
+                try {
+                    r2 = await axios.get(`${auth.api}type=${t}&action=${a}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: classicHeaders, timeout: 5000 }));
+                } catch (e2) {
+                    if (auth.apiAlt) {
+                        r2 = await axios.get(`${auth.apiAlt}type=${t}&action=${a}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: classicHeaders, timeout: 5000 }));
+                    } else throw e2;
                 }
-            }
-        } else if (fb) {
-            try {
-                items = await tryAction(fb, auth.authData.headers);
-            } catch (e3) {
-                console.warn(`[FETCHST ERROR] ${t}/${fb}: ${e3.message}`);
+                let items2 = r2.data?.js?.data || r2.data?.js || [];
+
+                // Fallback com clássicos, se necessário
+                if ((!items2 || (Array.isArray(items2) && items2.length === 0)) && fb) {
+                    try {
+                        r2 = await axios.get(`${auth.api}type=${t}&action=${fb}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: classicHeaders, timeout: 5000 }));
+                    } catch (e3) {
+                        if (auth.apiAlt) {
+                            r2 = await axios.get(`${auth.apiAlt}type=${t}&action=${fb}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: classicHeaders, timeout: 5000 }));
+                        } else throw e3;
+                    }
+                    items2 = r2.data?.js?.data || r2.data?.js || [];
+                }
+
+                const rawItems = Array.isArray(items2) ? items2 : Object.values(items2);
+                const mapped = rawItems.map(g => g.title || g.name || g.category_name || g.number || g.id).filter(Boolean);
+                console.log(`[DEBUG CATEGORIES] Portal (${t}) com clássicos devolveu ${mapped.length} categorias: ${JSON.stringify(mapped.slice(0, 3))}...`);
+                return mapped;
+
+            } catch (eClassic) {
+                console.warn(`[FETCHST ERROR] Clássico também falhou para ${t}/${a}: ${eClassic.message}`);
                 return [];
             }
-        } else {
-            console.warn(`[FETCHST ERROR] ${t}/${a}: ${e.message}`);
-            return [];
         }
-    }
 
-    // Se veio vazio e existe fallback, tenta o fallback
-    if ((!items || (Array.isArray(items) && items.length === 0)) && fb) {
-        try {
-            items = await tryAction(fb, auth.authData.headers);
-        } catch (e) {
-            if (e.response && e.response.status === 400 && engine.getStalkerAuth) {
-                console.log(`[FETCHST] Fallback vazio e erro 400. A tentar com headers clássicos...`);
-                try {
-                    const classicAuth = engine.getStalkerAuth(l, auth.token, auth.authData.headers['Cookie'] || '');
-                    const classicHeaders = { ...classicAuth.headers, Authorization: `Bearer ${auth.token}` };
-                    items = await tryAction(fb, classicHeaders);
-                } catch (e2) {
-                    console.warn(`[FETCHST ERROR] ${t}/${fb}: ${e2.message}`);
-                }
-            }
-        }
+        // Para outros erros, retorna vazio
+        console.warn(`[FETCHST ERROR] ${t}/${a}: ${e.message}`);
+        return [];
     }
-
-    const rawItems = Array.isArray(items) ? items : Object.values(items);
-    const mapped = rawItems.map(g => g.title || g.name || g.category_name || g.number || g.id).filter(Boolean);
-    console.log(`[DEBUG CATEGORIES] Portal (${t}) devolveu ${mapped.length} categorias: ${JSON.stringify(mapped.slice(0, 3))}...`);
-    return mapped;
 };
                         const [g1, g2, g3] = await Promise.all([
                             fetchSt('itv', 'get_genres', 'get_categories'), 
