@@ -135,7 +135,6 @@ const addon = {
                         const fetchSt = async (t, a, fb) => {
     try {
         let r;
-        // Tentativa 1: ação principal com cabeçalhos modernos
         try {
             r = await axios.get(`${auth.api}type=${t}&action=${a}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
         } catch (e) {
@@ -146,7 +145,6 @@ const addon = {
 
         let items = r.data?.js?.data || r.data?.js || [];
 
-        // Se não veio nada e existe fallback, tenta com a ação de fallback (fb)
         if ((!items || (Array.isArray(items) && items.length === 0)) && fb) {
             try {
                 r = await axios.get(`${auth.api}type=${t}&action=${fb}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
@@ -161,48 +159,48 @@ const addon = {
         return (Array.isArray(items) ? items : Object.values(items)).map(g => g.title || g.name).filter(Boolean);
 
     } catch(e) {
-        // 🔥 Se for erro 400 e existir getStalkerAuth, repete tudo com cabeçalhos clássicos
-        if (e.response && e.response.status === 400 && engine.getStalkerAuth) {
-            console.log(`[FETCHST] Erro 400 em ${t}/${a}. A tentar com cabeçalhos clássicos...`);
+        // 🔥 Se for erro 400 e existir classicAuthenticate, refaz a autenticação como clássica
+        if (e.response && e.response.status === 400 && engine.classicAuthenticate) {
+            console.log(`[FETCHST] Erro 400 em ${t}/${a}. A refazer autenticação clássica...`);
             try {
-                const classicAuth = engine.getStalkerAuth(l, auth.token, auth.authData.headers['Cookie'] || '');
-                const classicHeaders = { ...classicAuth.headers, Authorization: `Bearer ${auth.token}` };
+                const classicAuthResult = await engine.classicAuthenticate(l, l.proxy);
+                if (classicAuthResult) {
+                    // Substitui auth localmente para esta função
+                    const localAuth = classicAuthResult;
+                    const headers = localAuth.authData.headers;
 
-                // Ação principal com clássicos
-                let r2;
-                try {
-                    r2 = await axios.get(`${auth.api}type=${t}&action=${a}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: classicHeaders, timeout: 5000 }));
-                } catch (e2) {
-                    if (auth.apiAlt) {
-                        r2 = await axios.get(`${auth.apiAlt}type=${t}&action=${a}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: classicHeaders, timeout: 5000 }));
-                    } else throw e2;
-                }
-                let items2 = r2.data?.js?.data || r2.data?.js || [];
-
-                // Fallback com clássicos, se necessário
-                if ((!items2 || (Array.isArray(items2) && items2.length === 0)) && fb) {
+                    let r2;
                     try {
-                        r2 = await axios.get(`${auth.api}type=${t}&action=${fb}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: classicHeaders, timeout: 5000 }));
-                    } catch (e3) {
-                        if (auth.apiAlt) {
-                            r2 = await axios.get(`${auth.apiAlt}type=${t}&action=${fb}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: classicHeaders, timeout: 5000 }));
-                        } else throw e3;
+                        r2 = await axios.get(`${localAuth.api}type=${t}&action=${a}&sn=${localAuth.authData.sn}&token=${localAuth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers, timeout: 5000 }));
+                    } catch (e2) {
+                        if (localAuth.apiAlt) {
+                            r2 = await axios.get(`${localAuth.apiAlt}type=${t}&action=${a}&sn=${localAuth.authData.sn}&token=${localAuth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers, timeout: 5000 }));
+                        } else throw e2;
                     }
-                    items2 = r2.data?.js?.data || r2.data?.js || [];
+                    let items2 = r2.data?.js?.data || r2.data?.js || [];
+
+                    if ((!items2 || (Array.isArray(items2) && items2.length === 0)) && fb) {
+                        try {
+                            r2 = await axios.get(`${localAuth.api}type=${t}&action=${fb}&sn=${localAuth.authData.sn}&token=${localAuth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers, timeout: 5000 }));
+                        } catch (e3) {
+                            if (localAuth.apiAlt) {
+                                r2 = await axios.get(`${localAuth.apiAlt}type=${t}&action=${fb}&sn=${localAuth.authData.sn}&token=${localAuth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers, timeout: 5000 }));
+                            } else throw e3;
+                        }
+                        items2 = r2.data?.js?.data || r2.data?.js || [];
+                    }
+
+                    const rawItems = Array.isArray(items2) ? items2 : Object.values(items2);
+                    const mapped = rawItems.map(g => g.title || g.name || g.category_name || g.number || g.id).filter(Boolean);
+                    console.log(`[DEBUG CATEGORIES] Portal (${t}) com clássico devolveu ${mapped.length} categorias: ${JSON.stringify(mapped.slice(0, 3))}...`);
+                    return mapped;
                 }
-
-                const rawItems = Array.isArray(items2) ? items2 : Object.values(items2);
-                const mapped = rawItems.map(g => g.title || g.name || g.category_name || g.number || g.id).filter(Boolean);
-                console.log(`[DEBUG CATEGORIES] Portal (${t}) com clássicos devolveu ${mapped.length} categorias: ${JSON.stringify(mapped.slice(0, 3))}...`);
-                return mapped;
-
             } catch (eClassic) {
                 console.warn(`[FETCHST ERROR] Clássico também falhou para ${t}/${a}: ${eClassic.message}`);
                 return [];
             }
         }
 
-        // Para outros erros, retorna vazio
         console.warn(`[FETCHST ERROR] ${t}/${a}: ${e.message}`);
         return [];
     }
