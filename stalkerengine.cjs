@@ -82,10 +82,9 @@ for (const path of classicPaths) {
         const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
         const classicHeaders = {
     'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
-    'X-User-Agent': `Model: MAG250; SW: 2.18-r14-pub-250; STB_active: true; Device ID: ${deviceId}; Device ID 2: ${deviceId}; Signature: 88e76854; SN: ${serialNumber}`,
     'Referer': `${classicBase}/c/`,
-    'Accept': 'application/json, text/javascript, */*; q=0.01',
-    'X-Requested-With': 'XMLHttpRequest',
+    'Accept': '*/*',
+    'Connection': 'keep-alive',
     'Cookie': `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe/Lisbon;`
 };
         const res = await axios.get(handshakeUrl, getAxiosOpts(config, { headers: classicHeaders, timeout: 8000 }, proxyUrl));
