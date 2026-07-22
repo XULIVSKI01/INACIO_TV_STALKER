@@ -133,29 +133,86 @@ const addon = {
                 } else {
                     const auth = await engine.authenticate(l, l.proxy);                  if (auth) {
                         const fetchSt = async (t, a, fb) => {
-                            try {
-                                let r;
-                                try {
-                                    r = await axios.get(`${auth.api}type=${t}&action=${a}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
-                                } catch (e) {
-                                    if (auth.apiAlt) {
-                                        r = await axios.get(`${auth.apiAlt}type=${t}&action=${a}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
-                                    } else throw e;
-                                }
-                                let items = r.data?.js?.data || r.data?.js || [];
-                                if ((!items || (Array.isArray(items) && items.length === 0)) && fb) {
-                                    try {
-                                        r = await axios.get(`${auth.api}type=${t}&action=${fb}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
-                                    } catch (e) {
-                                        if (auth.apiAlt) {
-                                            r = await axios.get(`${auth.apiAlt}type=${t}&action=${fb}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
-                                        } else throw e;
-                                    }
-                                    items = r.data?.js?.data || r.data?.js || [];
-                                }
-                                return (Array.isArray(items) ? items : Object.values(items)).map(g => g.title || g.name).filter(Boolean);
-                            } catch(e) { return []; }
-                        };
+    // Função interna para tentar uma ação com cabeçalhos específicos (api e apiAlt)
+    const tryActionWithHeaders = async (action, headers, apiBase, apiAlt) => {
+        try {
+            const url = `${apiBase}type=${t}&action=${action}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+            const r = await axios.get(url, this.getAxiosOpts(l, { headers, timeout: 5000 }));
+            return r.data?.js?.data || r.data?.js || [];
+        } catch (e) {
+            if (apiAlt) {
+                try {
+                    const url = `${apiAlt}type=${t}&action=${action}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+                    const r = await axios.get(url, this.getAxiosOpts(l, { headers, timeout: 5000 }));
+                    return r.data?.js?.data || r.data?.js || [];
+                } catch (e2) {}
+            }
+            throw e;
+        }
+    };
+
+    let items = [];
+    let usedHeaders = auth.authData.headers; // cabeçalhos do handshake moderno
+
+    try {
+        // Tentativa 1: ação principal com cabeçalhos modernos
+        items = await tryActionWithHeaders(a, usedHeaders, auth.api, auth.apiAlt);
+    } catch (e) {
+        // Se falhar com 400, ativa os cabeçalhos clássicos completos
+        if (e.response && e.response.status === 400 && engine.getStalkerAuth) {
+            console.log(`[FETCHST] Erro 400 com headers modernos para ${t}/${a}. A usar headers clássicos...`);
+            try {
+                const classicAuth = engine.getStalkerAuth(l, auth.token, auth.authData.headers['Cookie'] || '');
+                usedHeaders = { ...classicAuth.headers, Authorization: `Bearer ${auth.token}` };
+                items = await tryActionWithHeaders(a, usedHeaders, auth.api, auth.apiAlt);
+            } catch (e2) {
+                if (fb) {
+                    try {
+                        items = await tryActionWithHeaders(fb, usedHeaders, auth.api, auth.apiAlt);
+                    } catch (e3) {
+                        console.warn(`[FETCHST ERROR] ${t}/${fb}: ${e3.message}`);
+                        return [];
+                    }
+                } else {
+                    console.warn(`[FETCHST ERROR] ${t}/${a}: ${e2.message}`);
+                    return [];
+                }
+            }
+        } else if (fb) {
+            try {
+                items = await tryActionWithHeaders(fb, usedHeaders, auth.api, auth.apiAlt);
+            } catch (e3) {
+                console.warn(`[FETCHST ERROR] ${t}/${fb}: ${e3.message}`);
+                return [];
+            }
+        } else {
+            console.warn(`[FETCHST ERROR] ${t}/${a}: ${e.message}`);
+            return [];
+        }
+    }
+
+    // Se a ação principal vier vazia, tenta o fallback com os cabeçalhos atuais
+    if ((!items || (Array.isArray(items) && items.length === 0)) && fb) {
+        try {
+            items = await tryActionWithHeaders(fb, usedHeaders, auth.api, auth.apiAlt);
+        } catch (e) {
+            if (e.response && e.response.status === 400 && usedHeaders !== auth.authData.headers && engine.getStalkerAuth) {
+                console.log(`[FETCHST] Fallback vazio e erro 400. A usar headers clássicos...`);
+                try {
+                    const classicAuth = engine.getStalkerAuth(l, auth.token, auth.authData.headers['Cookie'] || '');
+                    items = await tryActionWithHeaders(fb, { ...classicAuth.headers, Authorization: `Bearer ${auth.token}` }, auth.api, auth.apiAlt);
+                } catch (e2) {
+                    console.warn(`[FETCHST ERROR] ${t}/${fb}: ${e2.message}`);
+                }
+            }
+        }
+    }
+
+    const rawItems = Array.isArray(items) ? items : Object.values(items);
+    const mapped = rawItems.map(g => g.title || g.name || g.category_name || g.number || g.id).filter(Boolean);
+    console.log(`[DEBUG CATEGORIES] Portal (${t}) devolveu ${mapped.length} categorias: ${JSON.stringify(mapped.slice(0, 3))}...`);
+    return mapped;
+};
                         const [g1, g2, g3] = await Promise.all([
                             fetchSt('itv', 'get_genres', 'get_categories'), 
                             fetchSt('vod', 'get_categories', 'get_genres'), 
