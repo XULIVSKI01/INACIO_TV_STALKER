@@ -133,31 +133,58 @@ const addon = {
                 } else {
                     const auth = await engine.authenticate(l, l.proxy);                  if (auth) {
                         const fetchSt = async (t, a, fb) => {
-    // Função interna que tenta uma ação específica no api principal e, se falhar, no apiAlt
-    const tryAction = async (action) => {
+    // Função interna que tenta uma ação com cabeçalhos específicos
+    const tryAction = async (action, headers) => {
         try {
-            const r = await axios.get(`${auth.api}type=${t}&action=${action}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
+            const r = await axios.get(`${auth.api}type=${t}&action=${action}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers, timeout: 5000 }));
             return r.data?.js?.data || r.data?.js || [];
         } catch (e) {
             if (auth.apiAlt) {
-                const r = await axios.get(`${auth.apiAlt}type=${t}&action=${action}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
-                return r.data?.js?.data || r.data?.js || [];
+                try {
+                    const r = await axios.get(`${auth.apiAlt}type=${t}&action=${action}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers, timeout: 5000 }));
+                    return r.data?.js?.data || r.data?.js || [];
+                } catch (e2) {}
             }
-            throw e; // se não houver apiAlt, relança o erro
+            throw e;
         }
     };
 
     let items = [];
     try {
-        // Tenta a ação principal
-        items = await tryAction(a);
+        // 1. Tenta ação principal com cabeçalhos modernos
+        items = await tryAction(a, auth.authData.headers);
     } catch (e) {
-        // Ação principal falhou completamente (ex: 400). Tentamos o fallback se existir.
-        if (fb) {
+        // 2. Se falhar com 400, tenta ação principal com cabeçalhos clássicos
+        if (e.response && e.response.status === 400 && engine.getStalkerAuth) {
+            console.log(`[FETCHST] Erro 400 com headers modernos. A tentar com headers clássicos...`);
             try {
-                items = await tryAction(fb);
+                const classicAuth = engine.getStalkerAuth(l, auth.token, auth.authData.headers['Cookie'] || '');
+                const classicHeaders = { ...classicAuth.headers, Authorization: `Bearer ${auth.token}` };
+                items = await tryAction(a, classicHeaders);
             } catch (e2) {
-                console.warn(`[FETCHST ERROR] ${t}/${fb}: ${e2.message}`);
+                if (fb) {
+                    try {
+                        items = await tryAction(fb, auth.authData.headers);
+                    } catch (e3) {
+                        try {
+                            const classicAuth2 = engine.getStalkerAuth(l, auth.token, auth.authData.headers['Cookie'] || '');
+                            const classicHeaders2 = { ...classicAuth2.headers, Authorization: `Bearer ${auth.token}` };
+                            items = await tryAction(fb, classicHeaders2);
+                        } catch (e4) {
+                            console.warn(`[FETCHST ERROR] ${t}/${fb}: ${e4.message}`);
+                            return [];
+                        }
+                    }
+                } else {
+                    console.warn(`[FETCHST ERROR] ${t}/${a}: ${e2.message}`);
+                    return [];
+                }
+            }
+        } else if (fb) {
+            try {
+                items = await tryAction(fb, auth.authData.headers);
+            } catch (e3) {
+                console.warn(`[FETCHST ERROR] ${t}/${fb}: ${e3.message}`);
                 return [];
             }
         } else {
@@ -166,13 +193,21 @@ const addon = {
         }
     }
 
-    // Se a ação principal teve sucesso mas devolveu array vazio, tenta o fallback
+    // Se veio vazio e existe fallback, tenta o fallback
     if ((!items || (Array.isArray(items) && items.length === 0)) && fb) {
         try {
-            items = await tryAction(fb);
+            items = await tryAction(fb, auth.authData.headers);
         } catch (e) {
-            console.warn(`[FETCHST ERROR] ${t}/${fb}: ${e.message}`);
-            // continua com items vazio, mas não retorna erro
+            if (e.response && e.response.status === 400 && engine.getStalkerAuth) {
+                console.log(`[FETCHST] Fallback vazio e erro 400. A tentar com headers clássicos...`);
+                try {
+                    const classicAuth = engine.getStalkerAuth(l, auth.token, auth.authData.headers['Cookie'] || '');
+                    const classicHeaders = { ...classicAuth.headers, Authorization: `Bearer ${auth.token}` };
+                    items = await tryAction(fb, classicHeaders);
+                } catch (e2) {
+                    console.warn(`[FETCHST ERROR] ${t}/${fb}: ${e2.message}`);
+                }
+            }
         }
     }
 
