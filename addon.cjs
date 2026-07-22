@@ -133,40 +133,54 @@ const addon = {
                 } else {
                     const auth = await engine.authenticate(l, l.proxy);                  if (auth) {
                         const fetchSt = async (t, a, fb) => {
-                            try {
-    let r;
-    // Tentativa 1: ação principal no api
-    try {
-        r = await axios.get(`${auth.api}type=${t}&action=${a}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
-    } catch (e) {
-        if (auth.apiAlt) {
-            r = await axios.get(`${auth.apiAlt}type=${t}&action=${a}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
-        } else throw e;
-    }
-
-    let items = r.data?.js?.data || r.data?.js || [];
-
-    // Se não veio nada e existe fallback, tenta com a ação de fallback (fb)
-    if ((!items || (Array.isArray(items) && items.length === 0)) && fb) {
+    // Função interna que tenta uma ação específica no api principal e, se falhar, no apiAlt
+    const tryAction = async (action) => {
         try {
-            r = await axios.get(`${auth.api}type=${t}&action=${fb}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
+            const r = await axios.get(`${auth.api}type=${t}&action=${action}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
+            return r.data?.js?.data || r.data?.js || [];
         } catch (e) {
             if (auth.apiAlt) {
-                r = await axios.get(`${auth.apiAlt}type=${t}&action=${fb}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
-            } else throw e;
+                const r = await axios.get(`${auth.apiAlt}type=${t}&action=${action}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
+                return r.data?.js?.data || r.data?.js || [];
+            }
+            throw e; // se não houver apiAlt, relança o erro
         }
-        items = r.data?.js?.data || r.data?.js || [];
+    };
+
+    let items = [];
+    try {
+        // Tenta a ação principal
+        items = await tryAction(a);
+    } catch (e) {
+        // Ação principal falhou completamente (ex: 400). Tentamos o fallback se existir.
+        if (fb) {
+            try {
+                items = await tryAction(fb);
+            } catch (e2) {
+                console.warn(`[FETCHST ERROR] ${t}/${fb}: ${e2.message}`);
+                return [];
+            }
+        } else {
+            console.warn(`[FETCHST ERROR] ${t}/${a}: ${e.message}`);
+            return [];
+        }
+    }
+
+    // Se a ação principal teve sucesso mas devolveu array vazio, tenta o fallback
+    if ((!items || (Array.isArray(items) && items.length === 0)) && fb) {
+        try {
+            items = await tryAction(fb);
+        } catch (e) {
+            console.warn(`[FETCHST ERROR] ${t}/${fb}: ${e.message}`);
+            // continua com items vazio, mas não retorna erro
+        }
     }
 
     const rawItems = Array.isArray(items) ? items : Object.values(items);
     const mapped = rawItems.map(g => g.title || g.name || g.category_name || g.number || g.id).filter(Boolean);
     console.log(`[DEBUG CATEGORIES] Portal (${t}) devolveu ${mapped.length} categorias: ${JSON.stringify(mapped.slice(0, 3))}...`);
     return mapped;
-} catch(e) {
-    console.warn(`[FETCHST ERROR] ${t}/${a}: ${e.message}`);
-    return [];
-}
-                        };
+};
                         const [g1, g2, g3] = await Promise.all([
                             fetchSt('itv', 'get_genres', 'get_categories'), 
                             fetchSt('vod', 'get_categories', 'get_genres'), 
