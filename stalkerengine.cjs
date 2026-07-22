@@ -547,6 +547,7 @@ module.exports = {
     generateFiller,
     SessionManager,
     getAxiosOpts,
+    getStalkerAuth,   // 👈 esta linha
     authCache,
     CACHE_TTL,
     tryMultiplePipelines,
