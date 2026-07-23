@@ -691,9 +691,77 @@ const execStream = async (urlToPlay, isRetry = false) => {
         'Accept': '*/*',
         'Connection': 'keep-alive'
     };
-
-    // Métodos por ordem: Axios (MODERNO) → FFmpeg moderno → FFmpeg legacy → redirect
-    const methods = [
+    const hasPlayToken = urlToPlay.includes('play_token');
+    const methods = hasPlayToken
+    ? [
+        // 1. FFmpeg Legacy (prioridade para tokens curtos)
+        () => {
+            console.log(`[AUTO] play_token detetado. Prioridade FFmpeg Legacy...`);
+            const legacyHeaders = {
+                ...rawHeaders,
+                'Cookie': cookieString,
+                'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
+                'Referer': configData.url.replace(/\/$/, "") + "/c/",
+                'Accept': '*/*',
+                'Connection': 'keep-alive'
+            };
+            const hdrStr = Object.entries(legacyHeaders).map(([k,v]) => `${k}: ${v}`).join('\r\n') + '\r\n\r\n';
+            const ffmpeg = spawn('ffmpeg', [
+                '-headers', hdrStr,
+                '-re',
+                '-i', urlToPlay,
+                '-c', 'copy',
+                '-f', 'mpegts',
+                '-loglevel', 'error',
+                'pipe:1'
+            ]);
+            const source = ffmpeg.stdout;
+            source.killProcess = () => { if (!ffmpeg.killed) ffmpeg.kill('SIGKILL'); };
+            ffmpeg.on('error', () => { if (!source.destroyed) source.destroy(); });
+            return { source, method: 'ffmpeg-legacy' };
+        },
+        // 2. Axios (fallback rápido)
+        async () => {
+            console.log(`[AUTO] Tentar Axios direto...`);
+            const opts = addon.getAxiosOpts(configData, {
+                url: urlToPlay,
+                headers: streamHeaders,
+                responseType: 'stream',
+                timeout: 5000   // reduzido para 5s, mas podes manter 8000
+            });
+            const response = await axios(opts);
+            return { source: response.data, method: 'axios' };
+        },
+        // 3. FFmpeg moderno
+        () => {
+            console.log(`[AUTO] Tentar FFmpeg moderno...`);
+            const ffmpegHeaders = Object.entries({
+                ...rawHeaders,
+                'Cookie': cookieString,
+                'User-Agent': 'Mozilla/5.0 (Unknown; Linux armv7l) AppleWebKit/537.1+ (KHTML, like Gecko) Safari/537.1+ Stalker portal (0.5.66/0.5.66/1.0)',
+                'Referer': configData.url.replace(/\/$/, "") + "/c/",
+                'Accept': '*/*',
+                'Connection': 'keep-alive'
+            }).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
+            const ffmpeg = spawn('ffmpeg', [
+                '-headers', ffmpegHeaders,
+                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
+                '-fflags', 'nobuffer+discardcorrupt+genpts',
+                '-err_detect', 'ignore_err',
+                '-i', urlToPlay,
+                '-c', 'copy',
+                '-f', 'mpegts',
+                '-loglevel', 'error',
+                'pipe:1'
+            ]);
+            const source = ffmpeg.stdout;
+            source.killProcess = () => { if (!ffmpeg.killed) ffmpeg.kill('SIGKILL'); };
+            ffmpeg.on('error', () => { if (!source.destroyed) source.destroy(); });
+            return { source, method: 'ffmpeg-modern' };
+        }
+      ]
+    : [
+        // Sem play_token, ordem normal (Axios → moderno → legacy)
         async () => {
             console.log(`[AUTO] Tentar Axios direto...`);
             const opts = addon.getAxiosOpts(configData, {
@@ -756,7 +824,7 @@ const execStream = async (urlToPlay, isRetry = false) => {
             ffmpeg.on('error', () => { if (!source.destroyed) source.destroy(); });
             return { source, method: 'ffmpeg-legacy' };
         }
-    ];
+      ];
 
     let source = null;
 let usedMethod = '';
