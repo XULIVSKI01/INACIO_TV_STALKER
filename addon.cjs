@@ -155,44 +155,49 @@ async authenticate(config) {
     }
 
     // =================================================================
-    // TENTATIVA ESPECIAL: IMITAR UMA BOX MAG254 REAL (como a STBEmu)
-    // =================================================================
-    console.log(`[AUTH] Tentando handshake como MAG254...`);
-    const mag254Headers = {
-        'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 254 Safari/533.3',
-        'X-User-Agent': 'Model: MAG254; SW: 0.2.18-r22; Device ID: 000000000000000; Device ID 2: 000000000000000; Signature: 0000000000000000000000000000000000000000000000000000000000000000',
-        'Referer': `${cleanBase}/c/`,
-        'Accept': '*/*',
-        'Connection': 'Keep-Alive',
-        'Cookie': `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe/Lisbon;`
-    };
-    
-    const mag254Paths = ['/c/portal.php', '/portal.php'];
-    for (const path of mag254Paths) {
-        const fullUrl = `${cleanBase}${path}?`;
-        try {
-            const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
-            const res = await axios.get(handshakeUrl, this.getAxiosOpts(config, { headers: mag254Headers, timeout: 5000 }));
-            let data = res.data;
-            if (typeof data === 'string') data = JSON.parse(data.replace(/\/\*[\s\S]*?\*\//g, "").trim());
-            if (data?.js?.token) {
-                const token = data.js.token;
-                console.log(`[AUTH SUCCESS] MAG254 funcionou em ${path}!`);
-                mag254Headers.Authorization = `Bearer ${token}`;
-                mag254Headers.Cookie += ` token=${token}; access_token=${token};`;
-                const result = {
-                    api: fullUrl,
-                    apiAlt: fullUrl.replace(/\/[^\/]+$/, '/server/load.php?'),
-                    token,
-                    authData: { sn: data.js.sn || '0000000000000', headers: mag254Headers }
-                };
-                memCache[cacheKey] = { data: result, timestamp: Date.now() };
-                return result;
-            }
-        } catch (e) {
-            console.warn(`[AUTH SCAN] MAG254 ${path} recusado (${e.message})`);
+// TENTATIVA ESPECIAL: IMITAR UMA BOX MAG254 REAL (STBEmu)
+// =================================================================
+console.log(`[AUTH] Tentando handshake como MAG254 (completo)...`);
+const stbEmuHeaders = {
+    'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 254 Safari/533.3',
+    'X-User-Agent': 'Model: MAG254; SW: 0.2.18-r22; Device ID: FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF; Device ID 2: FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF; Signature: FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF',
+    'Referer': `${cleanBase}/c/`,
+    'Accept': 'application/json, text/javascript, */*; q=0.01',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate',
+    'X-Forwarded-For': '10.0.0.1',
+    'X-Real-IP': '10.0.0.1',
+    'Client-IP': '10.0.0.1',
+    'Connection': 'Keep-Alive',
+    'Cookie': `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe/Lisbon;`
+};
+
+const stbEmuPaths = ['/c/portal.php', '/portal.php'];
+for (const path of stbEmuPaths) {
+    const fullUrl = `${cleanBase}${path}?`;
+    try {
+        const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
+        const res = await axios.get(handshakeUrl, this.getAxiosOpts(config, { headers: stbEmuHeaders, timeout: 5000 }));
+        let data = res.data;
+        if (typeof data === 'string') data = JSON.parse(data.replace(/\/\*[\s\S]*?\*\//g, "").trim());
+        if (data?.js?.token) {
+            const token = data.js.token;
+            console.log(`[AUTH SUCCESS] MAG254 completo funcionou em ${path}!`);
+            stbEmuHeaders.Authorization = `Bearer ${token}`;
+            stbEmuHeaders.Cookie += ` token=${token}; access_token=${token};`;
+            const result = {
+                api: fullUrl,
+                apiAlt: fullUrl.replace(/\/[^\/]+$/, '/server/load.php?'),
+                token,
+                authData: { sn: data.js.sn || '0000000000000', headers: stbEmuHeaders }
+            };
+            memCache[cacheKey] = { data: result, timestamp: Date.now() };
+            return result;
         }
+    } catch (e) {
+        console.warn(`[AUTH SCAN] MAG254 completo ${path} recusado (${e.message})`);
     }
+}
 
     // =================================================================
     // MÉTODOS ORIGINAIS (mantidos na íntegra)
