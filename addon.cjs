@@ -144,146 +144,97 @@ const addon = {
         }
     },
 
-async authenticate(config) {
-    const mac = (config.mac || "00:1A:79:00:00:00").toUpperCase();
-    const cleanBase = config.url.trim().replace(/\/$/, "");
-    const cacheKey = `auth_${cleanBase}_${mac}`;
-
-    // Cache de 10 minutos
-    if (memCache[cacheKey] && Date.now() - memCache[cacheKey].timestamp < 10 * 60 * 1000) {
-        return memCache[cacheKey].data;
-    }
-
-    // =================================================================
-// TENTATIVA ESPECIAL: IMITAR UMA BOX MAG254 REAL (STBEmu)
-// =================================================================
-console.log(`[AUTH] Tentando handshake como MAG254 (completo)...`);
-const stbEmuHeaders = {
-    'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 254 Safari/533.3',
-    'X-User-Agent': 'Model: MAG254; SW: 0.2.18-r22; Device ID: FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF; Device ID 2: FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF; Signature: FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF',
-    'Referer': `${cleanBase}/c/`,
-    'Accept': 'application/json, text/javascript, */*; q=0.01',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Accept-Encoding': 'gzip, deflate',
-    'X-Forwarded-For': '10.0.0.1',
-    'X-Real-IP': '10.0.0.1',
-    'Client-IP': '10.0.0.1',
-    'Connection': 'Keep-Alive',
-    'Cookie': `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe/Lisbon;`
-};
-
-const stbEmuPaths = ['/c/portal.php', '/portal.php'];
-for (const path of stbEmuPaths) {
-    const fullUrl = `${cleanBase}${path}?`;
-    try {
-        const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
-        const res = await axios.get(handshakeUrl, this.getAxiosOpts(config, { headers: stbEmuHeaders, timeout: 5000 }));
-        let data = res.data;
-        if (typeof data === 'string') data = JSON.parse(data.replace(/\/\*[\s\S]*?\*\//g, "").trim());
-        if (data?.js?.token) {
-            const token = data.js.token;
-            console.log(`[AUTH SUCCESS] MAG254 completo funcionou em ${path}!`);
-            stbEmuHeaders.Authorization = `Bearer ${token}`;
-            stbEmuHeaders.Cookie += ` token=${token}; access_token=${token};`;
-            const result = {
-                api: fullUrl,
-                apiAlt: fullUrl.replace(/\/[^\/]+$/, '/server/load.php?'),
-                token,
-                authData: { sn: data.js.sn || '0000000000000', headers: stbEmuHeaders }
-            };
-            memCache[cacheKey] = { data: result, timestamp: Date.now() };
-            return result;
+    async authenticate(config) {
+        const mac = config.mac.toUpperCase();
+        const cleanBase = config.url.trim().replace(/\/$/, "");
+        const cacheKey = `auth_${cleanBase}_${mac}`;
+        if (authCache.has(cacheKey)) {
+            const cached = authCache.get(cacheKey);
+            if (Date.now() - cached.timestamp < 10 * 60 * 1000) return cached.data;
         }
-    } catch (e) {
-        console.warn(`[AUTH SCAN] MAG254 completo ${path} recusado (${e.message})`);
-    }
-}
 
-    // =================================================================
-    // MÉTODOS ORIGINAIS (mantidos na íntegra)
-    // =================================================================
-    const fakeResidencialIP = '188.81.121.45';
-    const deviceId  = crypto.createHash('md5').update(mac).digest('hex').toUpperCase();
-    const shortHash = crypto.createHash('md5').update(mac).digest('hex').substring(0, 13).toUpperCase();
-    const serialNumber = `8CA3${shortHash.substring(4)}`; 
+        const fakeResidencialIP = '188.81.121.45';
+        const deviceId  = crypto.createHash('md5').update(mac).digest('hex').toUpperCase();
+        const shortHash = crypto.createHash('md5').update(mac).digest('hex').substring(0, 13).toUpperCase();
+        const serialNumber = `8CA3${shortHash.substring(4)}`; 
 
-    const universalHeaders = {
-        'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
-        'X-User-Agent': `Model: MAG250; SW: 2.18-r14-pub-250; STB_active: true; Device ID: ${deviceId}; Device ID 2: ${deviceId}; Signature: 88e76854; SN: ${serialNumber}`,
-        'Referer': `${cleanBase}/c/`,
-        'Accept': 'application/json, text/javascript, */*; q=0.01',
-        'X-Runtime-Info': 'render: gles; s_type: 250; s_ver: 0.2.18-r14;',
-        'X-Requested-With': 'XMLHttpRequest',
-        'X-Forwarded-For': fakeResidencialIP,
-        'X-Real-IP': fakeResidencialIP,
-        'Client-IP': fakeResidencialIP,
-        'Cookie': `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe/Lisbon;`
-    };
+        const universalHeaders = {
+            'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
+            'X-User-Agent': `Model: MAG250; SW: 2.18-r14-pub-250; STB_active: true; Device ID: ${deviceId}; Device ID 2: ${deviceId}; Signature: 88e76854; SN: ${serialNumber}`,
+            'Referer': `${cleanBase}/c/`,
+            'Accept': 'application/json, text/javascript, */*; q=0.01',
+            'X-Runtime-Info': 'render: gles; s_type: 250; s_ver: 0.2.18-r14;',
+            'X-Requested-With': 'XMLHttpRequest',
+            'X-Forwarded-For': fakeResidencialIP,
+            'X-Real-IP': fakeResidencialIP,
+            'Client-IP': fakeResidencialIP,
+            'Cookie': `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe/Lisbon;`
+        };
 
-    const paths = ['/c/portal.php', '/portal.php', '/server/load.php', '/stalker_portal/server/load.php'];
+        const paths = ['/c/portal.php', '/portal.php', '/server/load.php', '/stalker_portal/server/load.php'];
 
-    console.log(`[STB-EMU MODE] Tentando enganar portal: ${cleanBase}`);
+        console.log(`[STB-EMU MODE] Tentando enganar portal: ${cleanBase}`);
 
-    for (const path of paths) {
-        const fullUrl = `${cleanBase}${path}?`;
-        try {
-            const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
-            const res = await axios.get(handshakeUrl, this.getAxiosOpts(config, { headers: universalHeaders, timeout: 5000 }));
-            let data = res.data;
-            if (typeof data === 'string') data = JSON.parse(data.replace(/\/\*[\s\S]*?\*\//g, "").trim());
-            if (data?.js?.token) {
-                const token = data.js.token;
-                console.log(`[AUTH SUCCESS] Servidor enganado em: ${path}`);
-                universalHeaders.Authorization = `Bearer ${token}`;
-                universalHeaders.Cookie += ` token=${token}; access_token=${token};`;
-                try { await axios.get(`${fullUrl}type=stb&action=get_profile&token=${token}&JsHttpRequest=1-0`, this.getAxiosOpts(config, { headers: universalHeaders })); } catch (e) { }
-                const result = { 
-                    api: fullUrl,
-                    apiAlt: fullUrl.replace(/\/[^\/]+$/, '/server/load.php?'),
-                    token, 
-                    authData: { sn: data.js.sn || deviceId.substring(0, 13), headers: universalHeaders } 
-                };
-                memCache[cacheKey] = { data: result, timestamp: Date.now() };
-                return result;
+        for (const path of paths) {
+            const fullUrl = `${cleanBase}${path}?`;
+            try {
+                const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
+                const res = await axios.get(handshakeUrl, this.getAxiosOpts(config, { headers: universalHeaders, timeout: 5000 }));
+                let data = res.data;
+                if (typeof data === 'string') data = JSON.parse(data.replace(/\/\*[\s\S]*?\*\//g, "").trim());
+                if (data?.js?.token) {
+                    const token = data.js.token;
+                    console.log(`[AUTH SUCCESS] Servidor enganado em: ${path}`);
+                    universalHeaders.Authorization = `Bearer ${token}`;
+                    universalHeaders.Cookie += ` token=${token}; access_token=${token};`;
+                    try { await axios.get(`${fullUrl}type=stb&action=get_profile&token=${token}&JsHttpRequest=1-0`, this.getAxiosOpts(config, { headers: universalHeaders })); } catch (e) { }
+                    const result = { 
+                        api: fullUrl,
+                        apiAlt: fullUrl.replace(/\/[^\/]+$/, '/server/load.php?'),
+                        token, 
+                        authData: { sn: data.js.sn || deviceId.substring(0, 13), headers: universalHeaders } 
+                    };
+                    authCache.set(cacheKey, { data: result, timestamp: Date.now() });
+                    return result;
+                }
+            } catch (e) {
+                console.warn(`[AUTH SCAN] ${path} recusado (Status: ${e.response?.status || 'OFFLINE'})`);
             }
-        } catch (e) {
-            console.warn(`[AUTH SCAN] ${path} recusado (Status: ${e.response?.status || 'OFFLINE'})`);
         }
-    }
 
-    // Fallback clássico
-    console.log(`[AUTH] IP falso falhou, a tentar método clássico...`);
-    const oldAuth = getStalkerAuth(config);
-    const oldBase = cleanBase.replace(/\/c$/, '');
-    const oldPaths = ['/c/portal.php', '/stalker_portal/c/portal.php', '/portal.php'];
+        // Fallback clássico
+        console.log(`[AUTH] IP falso falhou, a tentar método clássico...`);
+        const oldAuth = getStalkerAuth(config);
+        const oldBase = cleanBase.replace(/\/c$/, '');
+        const oldPaths = ['/c/portal.php', '/stalker_portal/c/portal.php', '/portal.php'];
 
-    for (const path of oldPaths) {
-        try {
-            const handshakeUrl = `${oldBase}${path}?type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
-            const res = await axios.get(handshakeUrl, this.getAxiosOpts(config, { headers: oldAuth.headers, timeout: 8000 }));
-            let data = typeof res.data === 'string' ? JSON.parse(res.data.replace(/\/\*[\s\S]*?\*\//g, "").trim()) : res.data;
-            if (data?.js?.token) {
-                const token = data.js.token;
-                console.log(`[AUTH SUCCESS] Clássico funcionou em: ${path}`);
-                oldAuth.headers.Authorization = `Bearer ${token}`;
-                oldAuth.headers.Cookie += ` token=${token}; access_token=${token};`;
-                const result = {
-                    api: `${oldBase}${path}?`,
-                    apiAlt: `${oldBase}/server/load.php?`,
-                    token,
-                    authData: { sn: data.js.sn || oldAuth.sn, headers: oldAuth.headers }
-                };
-                memCache[cacheKey] = { data: result, timestamp: Date.now() };
-                return result;
+        for (const path of oldPaths) {
+            try {
+                const handshakeUrl = `${oldBase}${path}?type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
+                const res = await axios.get(handshakeUrl, this.getAxiosOpts(config, { headers: oldAuth.headers, timeout: 8000 }));
+                let data = typeof res.data === 'string' ? JSON.parse(res.data.replace(/\/\*[\s\S]*?\*\//g, "").trim()) : res.data;
+                if (data?.js?.token) {
+                    const token = data.js.token;
+                    console.log(`[AUTH SUCCESS] Clássico funcionou em: ${path}`);
+                    oldAuth.headers.Authorization = `Bearer ${token}`;
+                    oldAuth.headers.Cookie += ` token=${token}; access_token=${token};`;
+                    const result = {
+                        api: `${oldBase}${path}?`,
+                        apiAlt: `${oldBase}/server/load.php?`,
+                        token,
+                        authData: { sn: data.js.sn || oldAuth.sn, headers: oldAuth.headers }
+                    };
+                    authCache.set(cacheKey, { data: result, timestamp: Date.now() });
+                    return result;
+                }
+            } catch (e) {
+                console.warn(`[AUTH SCAN] Clássico recusado em ${path} (${e.message})`);
             }
-        } catch (e) {
-            console.warn(`[AUTH SCAN] Clássico recusado em ${path} (${e.message})`);
         }
-    }
 
-    console.error(`[AUTH FATAL] Nenhum caminho ou perfil funcionou para este MAC.`);
-    return null;
-},
+        console.error(`[AUTH FATAL] Nenhum caminho ou perfil funcionou para este MAC.`);
+        return null;
+    },
 
     async getManifest(configBase64) {
     console.log("[MANIFEST] Pedido de Manifest recebido.");
