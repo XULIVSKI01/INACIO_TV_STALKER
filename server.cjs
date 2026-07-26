@@ -973,7 +973,7 @@ if (redirectImmediately || !source) {
 
    // Renovação proativa do token (para streams com play_token)
 let renewInterval = null;
-if (finalUrl && finalUrl.includes('play_token')) {
+if (urlToPlay && urlToPlay.includes('play_token')) {
     renewInterval = setInterval(async () => {
         try {
             const newAuth = await engine.authenticate(configData, configData.proxy);
