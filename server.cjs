@@ -891,34 +891,6 @@ for (const method of methods) {
 }
 
 if (redirectImmediately || !source) {
-    // Se tem play_token, redirecionar diretamente com token fresco (resolve mold7384 e similares)
-    if (urlToPlay.includes('play_token')) {
-        console.log(`[AUTO] play_token e pipelines falharam. A redirecionar com token fresco...`);
-        try {
-            const newAuth = await engine.authenticate(configData, configData.proxy);
-            if (newAuth) {
-                auth = newAuth;
-                const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&long_lived=1&JsHttpRequest=1-0`;
-                const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers }));
-                let streamUrl = linkRes.data?.js?.cmd || linkRes.data?.js || linkRes.data?.cmd;
-                if (streamUrl) {
-                    let freshUrl = streamUrl.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "").trim();
-                    if (!freshUrl.startsWith('http')) {
-                        const basePortal = configData.url.split('/c/')[0];
-                        freshUrl = basePortal + (freshUrl.startsWith('/') ? '' : '/') + freshUrl;
-                    }
-                    if (!res.headersSent) res.redirect(302, freshUrl);
-                    return;
-                }
-            }
-        } catch (e) {
-            console.warn(`[AUTO] Falha ao gerar link fresco: ${e.message}`);
-        }
-        if (!res.headersSent) res.status(502).json({ error: 'stream_unavailable' });
-        return;
-    }
-
-    // Para servidores sem play_token, tentar relay direto (comportamento atual)
     console.log(`[AUTO] Servidor exige redirect imediato. A tentar relay direto com token fresco...`);
     try {
         const newAuth = await engine.authenticate(configData, configData.proxy);
@@ -935,7 +907,12 @@ if (redirectImmediately || !source) {
                 }
                 const opts = addon.getAxiosOpts(configData, {
                     url: freshUrl,
-                    headers: { ...auth.authData.headers, 'Referer': configData.url.replace(/\/$/, "") + "/c/", 'Accept': '*/*', 'Connection': 'keep-alive' },
+                    headers: {
+                        ...auth.authData.headers,
+                        'Referer': configData.url.replace(/\/$/, "") + "/c/",
+                        'Accept': '*/*',
+                        'Connection': 'keep-alive'
+                    },
                     responseType: 'stream',
                     timeout: 8000
                 });
@@ -1031,17 +1008,15 @@ if (urlToPlay && urlToPlay.includes('play_token')) {
     global.linkAttempts[streamKey] = 0;
 
     source.on('end', async () => {
-    if (renewInterval) clearInterval(renewInterval);
-    console.log(`[PROXY TV] Stream terminou. Tentando reconectar automaticamente...`);
-    await attemptReconnect();
-});
-source.on('error', async (err) => {
-    if (renewInterval) clearInterval(renewInterval);
-    console.log(`[PROXY TV] Erro na stream: ${err.message}. Tentando reconectar...`);
-    await attemptReconnect();
-});
-req.on('close', () => {
-    if (renewInterval) clearInterval(renewInterval);
+        console.log(`[PROXY TV] Stream terminou. Tentando reconectar automaticamente...`);
+        await attemptReconnect();
+    });
+    source.on('error', async (err) => {
+        console.log(`[PROXY TV] Erro na stream: ${err.message}. Tentando reconectar...`);
+        await attemptReconnect();
+    });
+
+    req.on('close', () => {
         const cached = global.activeTvStreams[streamKey];
         if (cached) {
             cached.clients.delete(res);
