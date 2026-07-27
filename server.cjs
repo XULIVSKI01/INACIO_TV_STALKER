@@ -476,7 +476,7 @@ if (configData.type === 'm3u') {
             }
 
             if (!cleanUrl) {
-                const auth = await engine.authenticate(configData, configData.proxy);
+                const auth = await addon.authenticate(configData, configData.proxy);
                 if (!auth) return res.status(401).end();
 
                 let stalkerCmd = decodeURIComponent(channelId);
@@ -513,7 +513,7 @@ if (configData.type === 'm3u') {
             global.pendingVodPromises[vodKey] = vodPromise;
 
             try {
-                const auth = await engine.authenticate(configData, configData.proxy);
+                const auth = await addon.authenticate(configData, configData.proxy);
                 const streamHeaders = {
                     ...auth.authData.headers,
                     'Referer': configData.url.replace(/\/$/, "") + "/c/",
@@ -781,7 +781,7 @@ for (const method of methods) {
         if (e.response && (e.response.status === 401 || e.response.status === 404)) {
             console.log(`[AUTO] Erro ${e.response.status}. Renovando token...`);
             try {
-                const newAuth = await engine.authenticate(configData, configData.proxy);
+                const newAuth = await addon.authenticate(configData, configData.proxy);
                 if (newAuth) {
                     auth = newAuth;
                     const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&long_lived=1&JsHttpRequest=1-0`;
@@ -805,7 +805,7 @@ for (const method of methods) {
 if (redirectImmediately || !source) {
     console.log(`[AUTO] Servidor exige redirect imediato. A tentar relay direto com token fresco...`);
     try {
-        const newAuth = await engine.authenticate(configData, configData.proxy);
+        const newAuth = await addon.authenticate(configData, configData.proxy);
         if (newAuth) {
             auth = newAuth;
             const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&long_lived=1&JsHttpRequest=1-0`;
@@ -843,7 +843,7 @@ if (redirectImmediately || !source) {
     if (!source) {
         console.log(`[AUTO] A redirecionar como último recurso...`);
         try {
-            const newAuth = await engine.authenticate(configData, configData.proxy);
+            const newAuth = await addon.authenticate(configData, configData.proxy);
             if (newAuth) {
                 auth = newAuth;
                 const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&long_lived=1&JsHttpRequest=1-0`;
@@ -931,7 +931,7 @@ async function attemptReconnect() {
             const lastUrl = global.lastGoodUrl[streamKey] || possibleUrl;
             return execStream(lastUrl, true);
         }
-        const newAuth = await engine.authenticate(configData, configData.proxy);
+        const newAuth = await addon.authenticate(configData, configData.proxy);
         if (!newAuth) throw new Error('Falha na autenticação');
         auth = newAuth;
         const linkUrl = `${newAuth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${newAuth.authData.sn}&token=${newAuth.token}&long_lived=1&JsHttpRequest=1-0`;
@@ -953,7 +953,7 @@ async function attemptReconnect() {
 
 // Início da lógica de obtenção do primeiro link
 try {
-    auth = await engine.authenticate(configData, configData.proxy);
+    auth = await addon.authenticate(configData, configData.proxy);
     if (!auth) {
         delete global.pendingTvPromises[streamKey];
         return res.status(401).end();
@@ -981,7 +981,7 @@ try {
 if (cleanUrl && cleanUrl.includes('play_token')) {
     console.log(`[PROXY TV] play_token detetado. A redirecionar com token fresco...`);
     try {
-        const newAuth = await engine.authenticate(configData, configData.proxy);
+        const newAuth = await addon.authenticate(configData, configData.proxy);
         if (newAuth) {
             const linkUrl = `${newAuth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${newAuth.authData.sn}&token=${newAuth.token}&long_lived=1&JsHttpRequest=1-0`;
             const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: newAuth.authData.headers }));
@@ -1061,7 +1061,7 @@ app.post("/get-categories", async (req, res) => {
             
         } else {
             try {
-                const auth = await engine.authenticate(listConfig, listConfig.proxy);
+                const auth = await addon.authenticate(listConfig, listConfig.proxy);
                 if (auth) {
                     const opts = engine.getAxiosOpts(listConfig, { headers: auth.authData.headers, timeout: 5000 });
                     const apiBase = auth.api;
