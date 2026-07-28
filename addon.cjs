@@ -778,9 +778,8 @@ const addon = {
   }
 }
 
-                                const hasPlayToken = streams.some(s => s.url && s.url.includes('play_token'));
-const useProxy = config?.useProxy !== false && !hasPlayToken;
-
+                                // Se houver proxy configurado, forçar o stream a passar pelo proxy do addon
+                        const useProxy = config?.useProxy !== false;
 if (useProxy) {
     const hint = config?.streamHint || '';
     const proxyTitle = (hint ? hint + ' ' : '') + 
