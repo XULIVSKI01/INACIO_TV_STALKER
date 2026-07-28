@@ -976,34 +976,8 @@ try {
             cleanUrl = basePortal + (cleanUrl.startsWith('/') ? '' : '/') + cleanUrl;
         }
     }
-
     console.log(`[PROXY TV] Link obtido do portal: ${cleanUrl}`);
-
-// Se o link tem play_token, redirecionar diretamente (resolve tokens de vida ultra-curta)
-if (cleanUrl && cleanUrl.includes('play_token')) {
-    console.log(`[PROXY TV] play_token detetado. A redirecionar com token fresco...`);
-    try {
-        const newAuth = await engine.authenticate(configData, configData.proxy);
-        if (newAuth) {
-            const linkUrl = `${newAuth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${newAuth.authData.sn}&token=${newAuth.token}&long_lived=1&JsHttpRequest=1-0`;
-            const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: newAuth.authData.headers }));
-            let streamUrl = linkRes.data?.js?.cmd || linkRes.data?.js || linkRes.data?.cmd;
-            if (streamUrl) {
-                let freshUrl = streamUrl.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "").trim();
-                if (!freshUrl.startsWith('http')) {
-                    const basePortal = configData.url.split('/c/')[0];
-                    freshUrl = basePortal + (freshUrl.startsWith('/') ? '' : '/') + freshUrl;
-                }
-                return res.redirect(302, freshUrl);
-            }
-        }
-    } catch (e) {
-        console.warn(`[PROXY TV] Falha ao gerar token fresco: ${e.message}`);
-    }
-    // Se falhar a renovação, usa o link original
-    return res.redirect(302, cleanUrl);
-}
-execStream(cleanUrl);
+    execStream(cleanUrl);
 } catch (e) {
     console.error("[PROXY] Erro interno no pipe TV:", e.message);
     delete global.pendingTvPromises[streamKey];
