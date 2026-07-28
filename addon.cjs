@@ -723,7 +723,7 @@ const addon = {
     }
 } else {   // fecha o if (xtream) e inicia o else (Stalker)
     try {
-        let auth = await engine.authenticate(config, config.proxy);
+        let auth = await this.authenticate(config);
                 if (auth) {
                     const decodedCmd = decodeURIComponent(sId);
                     let realCmd = decodedCmd;
