@@ -476,8 +476,15 @@ if (configData.type === 'm3u') {
             }
 
             if (!cleanUrl) {
-                const auth = await addon.authenticate(configData, configData.proxy);
-                if (!auth) return res.status(401).end();
+                let auth = await engine.authenticate(configData, configData.proxy);
+if (!auth) {
+    console.log(`[PROXY] Autenticação original falhou. A tentar fallback clássico...`);
+    auth = await addon.authenticate(configData);
+}
+if (!auth) {
+    console.error(`[PROXY] ❌ Autenticação impossível para ${configData.url}`);
+    return res.status(401).end();
+}
 
                 let stalkerCmd = decodeURIComponent(channelId);
                 let seriesParam = '';
@@ -513,7 +520,16 @@ if (configData.type === 'm3u') {
             global.pendingVodPromises[vodKey] = vodPromise;
 
             try {
-                const auth = await addon.authenticate(configData, configData.proxy);
+                let auth = await engine.authenticate(configData, configData.proxy);
+if (!auth) {
+    console.log(`[PROXY] Autenticação original falhou. A tentar fallback clássico...`);
+    auth = await addon.authenticate(configData);
+}
+if (!auth) {
+    console.error(`[PROXY] ❌ Autenticação impossível para ${configData.url}`);
+    delete global.pendingVodPromises[vodKey];
+    return res.status(401).end();
+}
                 const streamHeaders = {
                     ...auth.authData.headers,
                     'Referer': configData.url.replace(/\/$/, "") + "/c/",
@@ -931,8 +947,12 @@ async function attemptReconnect() {
             const lastUrl = global.lastGoodUrl[streamKey] || possibleUrl;
             return execStream(lastUrl, true);
         }
-        const newAuth = await addon.authenticate(configData, configData.proxy);
-        if (!newAuth) throw new Error('Falha na autenticação');
+        let newAuth = await engine.authenticate(configData, configData.proxy);
+if (!newAuth) {
+    console.log(`[PROXY] Autenticação original falhou. A tentar fallback clássico...`);
+    newAuth = await addon.authenticate(configData);
+}
+if (!newAuth) throw new Error('Falha na autenticação');
         auth = newAuth;
         const linkUrl = `${newAuth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${newAuth.authData.sn}&token=${newAuth.token}&long_lived=1&JsHttpRequest=1-0`;
         const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: newAuth.authData.headers }));
@@ -953,11 +973,16 @@ async function attemptReconnect() {
 
 // Início da lógica de obtenção do primeiro link
 try {
-    auth = await addon.authenticate(configData, configData.proxy);
-    if (!auth) {
-        delete global.pendingTvPromises[streamKey];
-        return res.status(401).end();
-    }
+    auth = await engine.authenticate(configData, configData.proxy);
+if (!auth) {
+    console.log(`[PROXY] Autenticação original falhou. A tentar fallback clássico...`);
+    auth = await addon.authenticate(configData);
+}
+if (!auth) {
+    console.error(`[PROXY] ❌ Autenticação impossível para ${configData.url}`);
+    delete global.pendingTvPromises[streamKey];
+    return res.status(401).end();
+}
 
     let cleanUrl = null;
     if (isDirectLink) {
