@@ -347,49 +347,6 @@ app.get("/:config/stream/:type/:id.json", async (req, res) => {
     res.json(await addon.getStreams(req.params.type, req.params.id, req.params.config, host));
 });
 
-// Rota de proxy ligeiro – gera token fresco e redireciona (sem consumir banda)
-app.get("/dt/:config/:listIdx/:channelId", async (req, res) => {
-    const { config, listIdx, channelId } = req.params;
-    const lists = addon.parseConfig(config);
-    const configData = lists[listIdx];
-    if (!configData) return res.status(400).end();
-
-    const stalkerCmd = decodeURIComponent(channelId);
-
-    try {
-        // Autenticação com fallback duplo (engine → addon)
-        let auth = await engine.authenticate(configData, configData.proxy);
-        if (!auth) {
-            console.log(`[DT] Autenticação original falhou. A tentar addon.authenticate...`);
-            auth = await addon.authenticate(configData);
-        }
-        if (!auth) {
-            console.error(`[DT] ❌ Autenticação impossível para ${configData.url}`);
-            return res.status(401).end();
-        }
-
-        // Gera um link fresco
-        const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&long_lived=1&JsHttpRequest=1-0`;
-        const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers }));
-        let streamUrl = linkRes.data?.js?.cmd || linkRes.data?.js || linkRes.data?.cmd;
-
-        if (streamUrl) {
-            let freshUrl = streamUrl.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "").trim();
-            if (!freshUrl.startsWith('http')) {
-                const basePortal = configData.url.split('/c/')[0];
-                freshUrl = basePortal + (freshUrl.startsWith('/') ? '' : '/') + freshUrl;
-            }
-            console.log(`[DT] Redirecionando para token fresco: ${freshUrl.substring(0, 80)}...`);
-            return res.redirect(302, freshUrl);
-        } else {
-            return res.status(404).json({ error: 'stream_link_not_found' });
-        }
-    } catch (e) {
-        console.error(`[DT] Erro ao gerar link: ${e.message}`);
-        if (!res.headersSent) res.status(500).end();
-    }
-});
-
 // ROTA PRINCIPAL DO PROXY
 const sessions = new engine.SessionManager();
 
@@ -720,46 +677,6 @@ const execFfmpegLegacy = (urlToPlay, streamHeaders) => {
         req.on('close', () => { if (!ffmpeg.killed) ffmpeg.kill('SIGKILL'); });
     });
 };
-     
-async function tryCreateSource(url, streamHeaders, rawHeaders, cookieString) {
-    // 1. Tenta Axios (muito rápido, ideal para tokens ultra‑curtos)
-    try {
-        const opts = addon.getAxiosOpts(configData, {
-            url: url,
-            headers: streamHeaders,
-            responseType: 'stream',
-            timeout: 3000   // 3 segundos no máximo
-        });
-        const res = await axios(opts);
-        return res.data;
-    } catch(e) {
-        // 2. Fallback com FFmpeg moderno (rápido também)
-        try {
-            const ffmpegHeaders = Object.entries({
-                ...rawHeaders,
-                'Cookie': cookieString,
-                'User-Agent': 'Mozilla/5.0 (Unknown; Linux armv7l) AppleWebKit/537.1+ (KHTML, like Gecko) Safari/537.1+ Stalker portal (0.5.66/0.5.66/1.0)',
-                'Referer': configData.url.replace(/\/$/, "") + "/c/",
-                'Accept': '*/*',
-                'Connection': 'keep-alive'
-            }).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
-            const ffmpeg = spawn('ffmpeg', [
-                '-headers', ffmpegHeaders,
-                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
-                '-fflags', 'nobuffer+discardcorrupt+genpts',
-                '-err_detect', 'ignore_err',
-                '-i', url,
-                '-c', 'copy',
-                '-f', 'mpegts',
-                '-loglevel', 'error',
-                'pipe:1'
-            ]);
-            return ffmpeg.stdout;
-        } catch(e2) {
-            return null;
-        }
-    }
-}
 
 const execStream = async (urlToPlay, isRetry = false) => {
     if (res.headersSent) return;
@@ -774,77 +691,7 @@ const execStream = async (urlToPlay, isRetry = false) => {
         'Accept': '*/*',
         'Connection': 'keep-alive'
     };
-    const hasPlayToken = urlToPlay.includes('play_token');
-const methods = hasPlayToken
-    ? [
-        // 1. FFmpeg Legacy (prioridade máxima para tokens curtos)
-        () => {
-            console.log(`[AUTO] play_token detetado. Prioridade FFmpeg Legacy...`);
-            const legacyHeaders = {
-                ...rawHeaders,
-                'Cookie': cookieString,
-                'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
-                'Referer': configData.url.replace(/\/$/, "") + "/c/",
-                'Accept': '*/*',
-                'Connection': 'keep-alive'
-            };
-            const hdrStr = Object.entries(legacyHeaders).map(([k,v]) => `${k}: ${v}`).join('\r\n') + '\r\n\r\n';
-            const ffmpeg = spawn('ffmpeg', [
-                '-headers', hdrStr,
-                '-re',
-                '-i', urlToPlay,
-                '-c', 'copy',
-                '-f', 'mpegts',
-                '-loglevel', 'error',
-                'pipe:1'
-            ]);
-            const source = ffmpeg.stdout;
-            source.killProcess = () => { if (!ffmpeg.killed) ffmpeg.kill('SIGKILL'); };
-            ffmpeg.on('error', () => { if (!source.destroyed) source.destroy(); });
-            return { source, method: 'ffmpeg-legacy' };
-        },
-        // 2. Axios (fallback rápido)
-        async () => {
-            console.log(`[AUTO] Tentar Axios direto...`);
-            const opts = addon.getAxiosOpts(configData, {
-                url: urlToPlay,
-                headers: streamHeaders,
-                responseType: 'stream',
-                timeout: 5000
-            });
-            const response = await axios(opts);
-            return { source: response.data, method: 'axios' };
-        },
-        // 3. FFmpeg moderno
-        () => {
-            console.log(`[AUTO] Tentar FFmpeg moderno...`);
-            const ffmpegHeaders = Object.entries({
-                ...rawHeaders,
-                'Cookie': cookieString,
-                'User-Agent': 'Mozilla/5.0 (Unknown; Linux armv7l) AppleWebKit/537.1+ (KHTML, like Gecko) Safari/537.1+ Stalker portal (0.5.66/0.5.66/1.0)',
-                'Referer': configData.url.replace(/\/$/, "") + "/c/",
-                'Accept': '*/*',
-                'Connection': 'keep-alive'
-            }).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
-            const ffmpeg = spawn('ffmpeg', [
-                '-headers', ffmpegHeaders,
-                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
-                '-fflags', 'nobuffer+discardcorrupt+genpts',
-                '-err_detect', 'ignore_err',
-                '-i', urlToPlay,
-                '-c', 'copy',
-                '-f', 'mpegts',
-                '-loglevel', 'error',
-                'pipe:1'
-            ]);
-            const source = ffmpeg.stdout;
-            source.killProcess = () => { if (!ffmpeg.killed) ffmpeg.kill('SIGKILL'); };
-            ffmpeg.on('error', () => { if (!source.destroyed) source.destroy(); });
-            return { source, method: 'ffmpeg-modern' };
-        }
-      ]
-    : [
-        // Sem play_token, ordem normal (Axios → moderno → legacy)
+    const methods = [
         async () => {
             console.log(`[AUTO] Tentar Axios direto...`);
             const opts = addon.getAxiosOpts(configData, {
@@ -907,7 +754,7 @@ const methods = hasPlayToken
             ffmpeg.on('error', () => { if (!source.destroyed) source.destroy(); });
             return { source, method: 'ffmpeg-legacy' };
         }
-      ];
+    ];
 
     let source = null;
 let usedMethod = '';
@@ -1036,53 +883,20 @@ if (redirectImmediately || !source) {
         broadcaster.pipe(res);
     }
 
-  // Renovação proativa do token (para streams com play_token)
-let renewInterval = null;
-if (urlToPlay && urlToPlay.includes('play_token')) {
-    renewInterval = setInterval(async () => {
-        try {
-            const newAuth = await engine.authenticate(configData, configData.proxy);
-            if (!newAuth) return;
-            auth = newAuth;
-            const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&long_lived=1&JsHttpRequest=1-0`;
-            const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers }));
-            let newStreamUrl = linkRes.data?.js?.cmd || linkRes.data?.js || linkRes.data?.cmd;
-            if (!newStreamUrl) return;
-            let newCleanUrl = newStreamUrl.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "").trim();
-            if (!newCleanUrl.startsWith('http')) {
-                const basePortal = configData.url.split('/c/')[0];
-                newCleanUrl = basePortal + (newCleanUrl.startsWith('/') ? '' : '/') + newCleanUrl;
-            }
-            const freshSource = await tryCreateSource(newCleanUrl, streamHeaders, rawHeaders, cookieString);
-            if (freshSource && global.activeTvStreams[streamKey]) {
-                global.activeTvStreams[streamKey].source.unpipe();
-                freshSource.pipe(global.activeTvStreams[streamKey].broadcaster, { end: false });
-                global.activeTvStreams[streamKey].source = freshSource;
-                console.log(`[AUTO] Token renovado durante a stream.`);
-            }
-        } catch(e) {
-            console.warn(`[AUTO] Renovação de token falhou: ${e.message}`);
-        }
-    }, 500); // 2 segundos (ajusta para 1000 se necessário)
-}
-
     resolveOutcome({ type: 'stream' });
     delete global.pendingTvPromises[streamKey];
     global.linkAttempts[streamKey] = 0;
 
     source.on('end', async () => {
-      if (renewInterval) clearInterval(renewInterval);
         console.log(`[PROXY TV] Stream terminou. Tentando reconectar automaticamente...`);
         await attemptReconnect();
     });
     source.on('error', async (err) => {
-      if (renewInterval) clearInterval(renewInterval);
         console.log(`[PROXY TV] Erro na stream: ${err.message}. Tentando reconectar...`);
         await attemptReconnect();
     });
 
     req.on('close', () => {
-      if (renewInterval) clearInterval(renewInterval);
         const cached = global.activeTvStreams[streamKey];
         if (cached) {
             cached.clients.delete(res);
@@ -1163,33 +977,7 @@ try {
         }
     }
     console.log(`[PROXY TV] Link obtido do portal: ${cleanUrl}`);
-  
-/*    // Se o link tem play_token, redirecionar diretamente (resolve tokens de vida ultra-curta)
-if (cleanUrl && cleanUrl.includes('play_token')) {
-    console.log(`[PROXY TV] play_token detetado. A redirecionar com token fresco...`);
-    try {
-        const newAuth = await engine.authenticate(configData, configData.proxy);
-        if (newAuth) {
-            const linkUrl = `${newAuth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${newAuth.authData.sn}&token=${newAuth.token}&long_lived=1&JsHttpRequest=1-0`;
-            const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: newAuth.authData.headers }));
-            let streamUrl = linkRes.data?.js?.cmd || linkRes.data?.js || linkRes.data?.cmd;
-            if (streamUrl) {
-                let freshUrl = streamUrl.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "").trim();
-                if (!freshUrl.startsWith('http')) {
-                    const basePortal = configData.url.split('/c/')[0];
-                    freshUrl = basePortal + (freshUrl.startsWith('/') ? '' : '/') + freshUrl;
-                }
-                return res.redirect(302, freshUrl);
-            }
-        }
-    } catch (e) {
-        console.warn(`[PROXY TV] Falha ao gerar token fresco: ${e.message}`);
-    }
-    // Se falhar a renovação, usa o link original
-    return res.redirect(302, cleanUrl);
-}
-*/
-execStream(cleanUrl); // esta linha já existe e mantém-se
+    execStream(cleanUrl);
 } catch (e) {
     console.error("[PROXY] Erro interno no pipe TV:", e.message);
     delete global.pendingTvPromises[streamKey];
