@@ -722,16 +722,18 @@ const execFfmpegLegacy = (urlToPlay, streamHeaders) => {
 };
      
 async function tryCreateSource(url, streamHeaders, rawHeaders, cookieString) {
+    // 1. Tenta Axios (muito rápido, ideal para tokens ultra‑curtos)
     try {
         const opts = addon.getAxiosOpts(configData, {
             url: url,
             headers: streamHeaders,
             responseType: 'stream',
-            timeout: 5000
+            timeout: 3000   // 3 segundos no máximo
         });
         const res = await axios(opts);
         return res.data;
     } catch(e) {
+        // 2. Fallback com FFmpeg moderno (rápido também)
         try {
             const ffmpegHeaders = Object.entries({
                 ...rawHeaders,
@@ -757,7 +759,7 @@ async function tryCreateSource(url, streamHeaders, rawHeaders, cookieString) {
             return null;
         }
     }
-}      
+}
 
 const execStream = async (urlToPlay, isRetry = false) => {
     if (res.headersSent) return;
@@ -1061,7 +1063,7 @@ if (urlToPlay && urlToPlay.includes('play_token')) {
         } catch(e) {
             console.warn(`[AUTO] Renovação de token falhou: ${e.message}`);
         }
-    }, 2000); // 2 segundos (ajusta para 1000 se necessário)
+    }, 500); // 2 segundos (ajusta para 1000 se necessário)
 }
 
     resolveOutcome({ type: 'stream' });
