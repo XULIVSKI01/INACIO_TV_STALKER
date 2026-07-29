@@ -978,7 +978,7 @@ try {
     }
     console.log(`[PROXY TV] Link obtido do portal: ${cleanUrl}`);
   
-    // Se o link tem play_token, redirecionar diretamente (resolve tokens de vida ultra-curta)
+/*    // Se o link tem play_token, redirecionar diretamente (resolve tokens de vida ultra-curta)
 if (cleanUrl && cleanUrl.includes('play_token')) {
     console.log(`[PROXY TV] play_token detetado. A redirecionar com token fresco...`);
     try {
@@ -1002,6 +1002,7 @@ if (cleanUrl && cleanUrl.includes('play_token')) {
     // Se falhar a renovação, usa o link original
     return res.redirect(302, cleanUrl);
 }
+  */
 execStream(cleanUrl);   // esta linha já existe e mantém-se
 } catch (e) {
     console.error("[PROXY] Erro interno no pipe TV:", e.message);
