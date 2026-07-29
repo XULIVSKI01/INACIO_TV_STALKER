@@ -347,6 +347,49 @@ app.get("/:config/stream/:type/:id.json", async (req, res) => {
     res.json(await addon.getStreams(req.params.type, req.params.id, req.params.config, host));
 });
 
+// Rota de proxy ligeiro – gera token fresco e redireciona (sem consumir banda)
+app.get("/dt/:config/:listIdx/:channelId", async (req, res) => {
+    const { config, listIdx, channelId } = req.params;
+    const lists = addon.parseConfig(config);
+    const configData = lists[listIdx];
+    if (!configData) return res.status(400).end();
+
+    const stalkerCmd = decodeURIComponent(channelId);
+
+    try {
+        // Autenticação com fallback duplo (engine → addon)
+        let auth = await engine.authenticate(configData, configData.proxy);
+        if (!auth) {
+            console.log(`[DT] Autenticação original falhou. A tentar addon.authenticate...`);
+            auth = await addon.authenticate(configData);
+        }
+        if (!auth) {
+            console.error(`[DT] ❌ Autenticação impossível para ${configData.url}`);
+            return res.status(401).end();
+        }
+
+        // Gera um link fresco
+        const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&long_lived=1&JsHttpRequest=1-0`;
+        const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers }));
+        let streamUrl = linkRes.data?.js?.cmd || linkRes.data?.js || linkRes.data?.cmd;
+
+        if (streamUrl) {
+            let freshUrl = streamUrl.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "").trim();
+            if (!freshUrl.startsWith('http')) {
+                const basePortal = configData.url.split('/c/')[0];
+                freshUrl = basePortal + (freshUrl.startsWith('/') ? '' : '/') + freshUrl;
+            }
+            console.log(`[DT] Redirecionando para token fresco: ${freshUrl.substring(0, 80)}...`);
+            return res.redirect(302, freshUrl);
+        } else {
+            return res.status(404).json({ error: 'stream_link_not_found' });
+        }
+    } catch (e) {
+        console.error(`[DT] Erro ao gerar link: ${e.message}`);
+        if (!res.headersSent) res.status(500).end();
+    }
+});
+
 // ROTA PRINCIPAL DO PROXY
 const sessions = new engine.SessionManager();
 
