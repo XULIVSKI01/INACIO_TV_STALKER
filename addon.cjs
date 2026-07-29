@@ -778,20 +778,8 @@ const addon = {
   }
 }
 
-                                const hasPlayToken = streams.some(s => s.url && s.url.includes('play_token'));
-
-if (hasPlayToken) {
-    const dtProxyUrl = `https://${host}/dt/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(sId)}`;
-    streams.push({
-        name: name,
-        url: dtProxyUrl,
-        title: `🔄 Directo TV (renovável)`,
-        behaviorHints: { notWebReady: type === 'tv' },
-        contentType: type === 'tv' ? 'video/mp2t' : undefined
-    });
-}
-
-const useProxy = config?.useProxy !== false && !hasPlayToken;
+                                // Se houver proxy configurado, forçar o stream a passar pelo proxy do addon
+                        const useProxy = config?.useProxy !== false;
 if (useProxy) {
     const hint = config?.streamHint || '';
     const proxyTitle = (hint ? hint + ' ' : '') + 
