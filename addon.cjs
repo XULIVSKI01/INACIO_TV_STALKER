@@ -739,21 +739,11 @@ const addon = {
                     }
                     console.log(`[STREAMS] Stalker - Extraindo link para cmd/id=${realCmd}, series=${sNum || 'N/A'}`);
 
-                    let cmdUrl = null;
-
-// Se o comando original já é um link HTTP direto, usa-o imediatamente (como a STBEmu)
-const possibleDirectUrl = realCmd.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "").trim();
-if (possibleDirectUrl.startsWith('http://') || possibleDirectUrl.startsWith('https://')) {
-    console.log(`[STREAMS] Link direto detetado. A usar sem create_link...`);
-    cmdUrl = possibleDirectUrl;
-} else {
-    // Caso contrário, gera o link via create_link
-    cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
-    if (!cmdUrl || cmdUrl.trim() === "") {
-        console.log(`[STREAMS] Link não recebido. Forçando novo token...`);
-        auth = await engine.authenticate(config, config.proxy);
-        if (auth) cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
-    }
+                    let cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
+if (!cmdUrl || cmdUrl.trim() === "") {
+    console.log(`[STREAMS] Link não recebido. Forçando novo token...`);
+    auth = await engine.authenticate(config, config.proxy);
+    if (auth) cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
 }
 
                     if (typeof cmdUrl === 'string' && cmdUrl.trim() !== "") {
