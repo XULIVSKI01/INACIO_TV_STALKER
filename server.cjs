@@ -772,7 +772,77 @@ const execStream = async (urlToPlay, isRetry = false) => {
         'Accept': '*/*',
         'Connection': 'keep-alive'
     };
-    const methods = [
+    const hasPlayToken = urlToPlay.includes('play_token');
+const methods = hasPlayToken
+    ? [
+        // 1. FFmpeg Legacy (prioridade máxima para tokens curtos)
+        () => {
+            console.log(`[AUTO] play_token detetado. Prioridade FFmpeg Legacy...`);
+            const legacyHeaders = {
+                ...rawHeaders,
+                'Cookie': cookieString,
+                'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
+                'Referer': configData.url.replace(/\/$/, "") + "/c/",
+                'Accept': '*/*',
+                'Connection': 'keep-alive'
+            };
+            const hdrStr = Object.entries(legacyHeaders).map(([k,v]) => `${k}: ${v}`).join('\r\n') + '\r\n\r\n';
+            const ffmpeg = spawn('ffmpeg', [
+                '-headers', hdrStr,
+                '-re',
+                '-i', urlToPlay,
+                '-c', 'copy',
+                '-f', 'mpegts',
+                '-loglevel', 'error',
+                'pipe:1'
+            ]);
+            const source = ffmpeg.stdout;
+            source.killProcess = () => { if (!ffmpeg.killed) ffmpeg.kill('SIGKILL'); };
+            ffmpeg.on('error', () => { if (!source.destroyed) source.destroy(); });
+            return { source, method: 'ffmpeg-legacy' };
+        },
+        // 2. Axios (fallback rápido)
+        async () => {
+            console.log(`[AUTO] Tentar Axios direto...`);
+            const opts = addon.getAxiosOpts(configData, {
+                url: urlToPlay,
+                headers: streamHeaders,
+                responseType: 'stream',
+                timeout: 5000
+            });
+            const response = await axios(opts);
+            return { source: response.data, method: 'axios' };
+        },
+        // 3. FFmpeg moderno
+        () => {
+            console.log(`[AUTO] Tentar FFmpeg moderno...`);
+            const ffmpegHeaders = Object.entries({
+                ...rawHeaders,
+                'Cookie': cookieString,
+                'User-Agent': 'Mozilla/5.0 (Unknown; Linux armv7l) AppleWebKit/537.1+ (KHTML, like Gecko) Safari/537.1+ Stalker portal (0.5.66/0.5.66/1.0)',
+                'Referer': configData.url.replace(/\/$/, "") + "/c/",
+                'Accept': '*/*',
+                'Connection': 'keep-alive'
+            }).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
+            const ffmpeg = spawn('ffmpeg', [
+                '-headers', ffmpegHeaders,
+                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
+                '-fflags', 'nobuffer+discardcorrupt+genpts',
+                '-err_detect', 'ignore_err',
+                '-i', urlToPlay,
+                '-c', 'copy',
+                '-f', 'mpegts',
+                '-loglevel', 'error',
+                'pipe:1'
+            ]);
+            const source = ffmpeg.stdout;
+            source.killProcess = () => { if (!ffmpeg.killed) ffmpeg.kill('SIGKILL'); };
+            ffmpeg.on('error', () => { if (!source.destroyed) source.destroy(); });
+            return { source, method: 'ffmpeg-modern' };
+        }
+      ]
+    : [
+        // Sem play_token, ordem normal (Axios → moderno → legacy)
         async () => {
             console.log(`[AUTO] Tentar Axios direto...`);
             const opts = addon.getAxiosOpts(configData, {
@@ -835,7 +905,7 @@ const execStream = async (urlToPlay, isRetry = false) => {
             ffmpeg.on('error', () => { if (!source.destroyed) source.destroy(); });
             return { source, method: 'ffmpeg-legacy' };
         }
-    ];
+      ];
 
     let source = null;
 let usedMethod = '';
@@ -1092,7 +1162,7 @@ try {
     }
     console.log(`[PROXY TV] Link obtido do portal: ${cleanUrl}`);
   
-    // Se o link tem play_token, redirecionar diretamente (resolve tokens de vida ultra-curta)
+/*    // Se o link tem play_token, redirecionar diretamente (resolve tokens de vida ultra-curta)
 if (cleanUrl && cleanUrl.includes('play_token')) {
     console.log(`[PROXY TV] play_token detetado. A redirecionar com token fresco...`);
     try {
@@ -1116,7 +1186,8 @@ if (cleanUrl && cleanUrl.includes('play_token')) {
     // Se falhar a renovação, usa o link original
     return res.redirect(302, cleanUrl);
 }
-execStream(cleanUrl);   // esta linha já existe e mantém-se
+*/
+execStream(cleanUrl); // esta linha já existe e mantém-se
 } catch (e) {
     console.error("[PROXY] Erro interno no pipe TV:", e.message);
     delete global.pendingTvPromises[streamKey];
