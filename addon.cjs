@@ -740,11 +740,11 @@ const addon = {
                     console.log(`[STREAMS] Stalker - Extraindo link para cmd/id=${realCmd}, series=${sNum || 'N/A'}`);
 
                     let cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
-if (!cmdUrl || cmdUrl.trim() === "") {
-    console.log(`[STREAMS] Link não recebido. Forçando novo token...`);
-    auth = await engine.authenticate(config, config.proxy);
-    if (auth) cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
-}
+                    if (!cmdUrl || cmdUrl.trim() === "") {
+                        console.log(`[STREAMS] Link não recebido. Forçando novo token...`);
+                        auth = await engine.authenticate(config, config.proxy);
+                        if (auth) cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
+                    }
 
                     if (typeof cmdUrl === 'string' && cmdUrl.trim() !== "") {
                         console.log(`[STREAMS] Sucesso! URL original recebido: ${cmdUrl}`);
