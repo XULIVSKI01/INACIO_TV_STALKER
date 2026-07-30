@@ -559,22 +559,19 @@ const addon = {
                     }
                 } else {
                     const auth = await this.authenticate(config);
-if (auth) {
-    const apiBase = `${auth.api}sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
-    const opts = engine.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 10000 });
+                    if (auth) {
+                        const apiBase = `${auth.api}sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+                        const opts = engine.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 10000 });
 
-    let rFirst = await axios.get(`${apiBase}&type=series&action=get_ordered_list&movie_id=${sId}`, opts);
-    let levels = rFirst.data?.js?.data || rFirst.data?.js || [];
-    levels = Array.isArray(levels) ? levels : Object.values(levels);
+                        let rFirst = await axios.get(`${apiBase}&type=series&action=get_ordered_list&movie_id=${sId}`, opts);
+                        let levels = rFirst.data?.js?.data || rFirst.data?.js || [];
+                        levels = Array.isArray(levels) ? levels : Object.values(levels);
 
-    if (levels.length === 0) {
-        let rSecond = await axios.get(`${apiBase}&type=vod&action=get_ordered_list&movie_id=${sId}`, opts);
-        let levelsSecond = rSecond.data?.js?.data || rSecond.data?.js || [];
-        levels = Array.isArray(levelsSecond) ? levelsSecond : Object.values(levelsSecond);
-    }
-
-    // O resto do processamento dos levels (for loop, etc.) mantém-se igual
-}
+                        if (levels.length === 0) {
+                            let rSecond = await axios.get(`${apiBase}&type=vod&action=get_ordered_list&movie_id=${sId}`, opts);
+                            let levelsSecond = rSecond.data?.js?.data || rSecond.data?.js || [];
+                            levels = Array.isArray(levelsSecond) ? levelsSecond : Object.values(levelsSecond);
+                        }
 
                         for (let i = 0; i < levels.length; i++) {
                             let item = levels[i];
