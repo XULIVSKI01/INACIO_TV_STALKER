@@ -320,19 +320,28 @@ const addon = {
             catalogs.push({ type: "series", id: `ser_${i}`, name: `${l.name || `Lista ${i+1}`} 🍿`, extra: [{ name: "genre", options: uniqueSer }, { name: "skip" }] });
         }
     }));
+
+    // Catálogos de pesquisa (para aparecer na lupa do Stremio)
+    catalogs.push({ type: "movie", id: "search", name: "Pesquisa Filmes", extra: [{ name: "search", isRequired: true }, { name: "skip" }] });
+    catalogs.push({ type: "series", id: "search", name: "Pesquisa Séries", extra: [{ name: "search", isRequired: true }, { name: "skip" }] });        
+        
     const addonName = lists.map(l => l.name).filter(Boolean).join(" + ") || "XuloV Hub";
     const m = { id: "org.xulov.stalker", version: "5.3.0", name: addonName, resources: ["catalog", "stream", "meta"], types: ["tv", "movie", "series"], idPrefixes: ["xlv:"], catalogs: catalogs };
     setCache(cacheKey, m, 60); 
     console.log("[MANIFEST] Manifest gerado com sucesso.");
     return m;
 },
-    
-        async getCatalog(type, id, extra, configBase64) {
-        const normalize = (str) => (str || '').replace(/\s+/g, ' ').trim().toLowerCase();
-        console.log(`[CATALOG] Pedido: type=${type}, id=${id}, genre=${extra.genre || 'N/A'}, skip=${extra.skip || 0}`);
-        const lists = this.parseConfig(configBase64);
-        const lIdx = parseInt(id.split('_')[1]);
-        const config = lists[lIdx]; if (!config) return { metas: [] };
+    async getCatalog(type, id, extra, configBase64) {
+    const normalize = (str) => (str || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    console.log(`[CATALOG] Pedido: type=${type}, id=${id}, genre=${extra.genre || 'N/A'}, search=${extra.search || 'N/A'}, skip=${extra.skip || 0}`);
+    const lists = this.parseConfig(configBase64);
+    const lIdx = parseInt(id.split('_')[1]) || 0;  // para search o id é "search", não tem índice
+    const config = lists[lIdx]; if (!config) return { metas: [] };
+
+    // Se for catálogo de pesquisa
+    if (id === "search" && extra.search) {
+        return await this.searchCatalog(type, extra.search, config, extra.skip);
+    }
 
         const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
         const skip = parseInt(extra.skip) || 0;
@@ -442,6 +451,41 @@ const addon = {
         }
         return { metas };
     },
+
+    async searchCatalog(type, query, config, skip = 0) {
+    const lIdx = this.parseConfig(configBase64).indexOf(config); // obter índice da lista
+    const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
+    const sType = type === "movie" ? "vod" : "series";
+    const auth = await this.authenticate(config);
+    if (!auth) return { metas: [] };
+
+    const apiBase = `${auth.api}sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+    const opts = engine.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 10000 });
+
+    try {
+        // Tenta usar ação de pesquisa se o portal suportar
+        const searchUrl = `${apiBase}&type=${sType}&action=get_ordered_list&search=${encodeURIComponent(query)}&p=0`;
+        const r = await axios.get(searchUrl, opts);
+        const data = r.data?.js?.data || r.data?.js || [];
+        const items = Array.isArray(data) ? data : Object.values(data);
+
+        // Mapeia para metas
+        const metas = items.filter(i => i && (i.id || i.cmd)).slice(skip, skip + 50).map(i => {
+            const targetId = (type === "series") ? (i.id || i.cmd) : (i.cmd || i.id);
+            return {
+                id: `xlv:${lIdx}_${listSig}:${encodeURIComponent(targetId)}:${encodeURIComponent(i.name || i.title)}:${encodeURIComponent(i.screenshot_uri || i.logo || '')}`,
+                name: i.name || i.title,
+                type: type,
+                poster: i.screenshot_uri || i.logo,
+                posterShape: type === "movie" ? "poster" : "poster"
+            };
+        });
+        console.log(`[SEARCH] Encontrados ${metas.length} resultados para "${query}"`);
+        return { metas };
+    } catch (e) {
+        console.warn(`[SEARCH] Erro na pesquisa: ${e.message}`);
+        return { metas: [] };
+    }
 
     async getMeta(type, id, configBase64) {
         console.log(`[META] Pedido: type=${type}, id=${id}`);
