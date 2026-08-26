@@ -486,6 +486,7 @@ const addon = {
         console.warn(`[SEARCH] Erro na pesquisa: ${e.message}`);
         return { metas: [] };
     }
+},
 
     async getMeta(type, id, configBase64) {
         console.log(`[META] Pedido: type=${type}, id=${id}`);
