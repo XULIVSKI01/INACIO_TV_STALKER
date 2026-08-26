@@ -519,7 +519,6 @@ const addon = {
     const metas = allMetas.slice(skip, skip + 50);
     console.log(`[SEARCH] Encontrados ${metas.length} resultados para "${query}"`);
     return { metas };
-  }
 },
 
     async getMeta(type, id, configBase64) {
