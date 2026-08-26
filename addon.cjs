@@ -340,7 +340,7 @@ const addon = {
 
     // Se for catálogo de pesquisa
     if (id === "search" && extra.search) {
-        return await this.searchCatalog(type, extra.search, config, extra.skip);
+        return await this.searchCatalog(type, extra.search, config, extra.skip, configBase64);
     }
 
         const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
@@ -452,7 +452,7 @@ const addon = {
         return { metas };
     },
 
-    async searchCatalog(type, query, config, skip = 0) {
+    async searchCatalog(type, query, config, skip = 0, configBase64) {
     const lIdx = this.parseConfig(configBase64).indexOf(config); // obter índice da lista
     const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
     const sType = type === "movie" ? "vod" : "series";
