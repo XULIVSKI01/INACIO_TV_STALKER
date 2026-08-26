@@ -340,8 +340,8 @@ const addon = {
 
     // Se for catálogo de pesquisa
     if (id === "search" && extra.search) {
-        return await this.searchCatalog(type, extra.search, config, extra.skip, configBase64);
-    }
+    return await this.searchCatalog(type, extra.search, lists, parseInt(extra.skip) || 0);
+}
 
         const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
         const skip = parseInt(extra.skip) || 0;
@@ -452,40 +452,74 @@ const addon = {
         return { metas };
     },
 
-    async searchCatalog(type, query, config, skip = 0, configBase64) {
-    const lIdx = this.parseConfig(configBase64).indexOf(config); // obter índice da lista
-    const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
-    const sType = type === "movie" ? "vod" : "series";
-    const auth = await this.authenticate(config);
-    if (!auth) return { metas: [] };
+    async searchCatalog(type, query, lists, skip = 0) {
+    const normalize = (str) => (str || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const allMetas = [];
 
-    const apiBase = `${auth.api}sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
-    const opts = engine.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 10000 });
+    for (let i = 0; i < lists.length; i++) {
+        const config = lists[i];
+        if (!config) continue;
 
-    try {
-        // Tenta usar ação de pesquisa se o portal suportar
-        const searchUrl = `${apiBase}&type=${sType}&action=get_ordered_list&search=${encodeURIComponent(query)}&p=0`;
-        const r = await axios.get(searchUrl, opts);
-        const data = r.data?.js?.data || r.data?.js || [];
-        const items = Array.isArray(data) ? data : Object.values(data);
+        const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
+        const auth = await this.authenticate(config);
+        if (!auth) continue;
 
-        // Mapeia para metas
-        const metas = items.filter(i => i && (i.id || i.cmd)).slice(skip, skip + 50).map(i => {
-            const targetId = (type === "series") ? (i.id || i.cmd) : (i.cmd || i.id);
-            return {
-                id: `xlv:${lIdx}_${listSig}:${encodeURIComponent(targetId)}:${encodeURIComponent(i.name || i.title)}:${encodeURIComponent(i.screenshot_uri || i.logo || '')}`,
-                name: i.name || i.title,
-                type: type,
-                poster: i.screenshot_uri || i.logo,
-                posterShape: type === "movie" ? "poster" : "poster"
-            };
-        });
-        console.log(`[SEARCH] Encontrados ${metas.length} resultados para "${query}"`);
-        return { metas };
-    } catch (e) {
-        console.warn(`[SEARCH] Erro na pesquisa: ${e.message}`);
-        return { metas: [] };
+        const apiBase = `${auth.api}sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+        const opts = engine.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 10000 });
+        const sType = type === "movie" ? "vod" : "series";
+
+        try {
+            // Tenta pesquisa remota (se o portal suportar)
+            const searchUrl = `${apiBase}&type=${sType}&action=get_ordered_list&search=${encodeURIComponent(query)}&p=0`;
+            const r = await axios.get(searchUrl, opts);
+            const data = r.data?.js?.data || r.data?.js || [];
+            const items = Array.isArray(data) ? data : Object.values(data);
+
+            if (items.length > 0) {
+                items.forEach(item => {
+                    const targetId = (type === "series") ? (item.id || item.cmd) : (item.cmd || item.id);
+                    const name = item.name || item.title || item.name_original || '';
+                    const poster = item.screenshot_uri || item.logo || item.poster || '';
+                    allMetas.push({
+                        id: `xlv:${i}_${listSig}:${encodeURIComponent(targetId)}:${encodeURIComponent(name)}:${encodeURIComponent(poster)}`,
+                        name: name,
+                        type: type,
+                        poster: poster,
+                        posterShape: 'poster'
+                    });
+                });
+            } else {
+                // Fallback: pesquisa local carregando a primeira página e filtrando pelo título
+                const pageRes = await axios.get(`${apiBase}&type=${sType}&action=get_ordered_list&p=0`, opts);
+                const pageData = pageRes.data?.js?.data || pageRes.data?.js || [];
+                const pageItems = Array.isArray(pageData) ? pageData : Object.values(pageData);
+                const filtered = pageItems.filter(item => {
+                    const name = (item.name || item.title || '').toLowerCase();
+                    return name.includes(normalize(query));
+                });
+                filtered.forEach(item => {
+                    const targetId = (type === "series") ? (item.id || item.cmd) : (item.cmd || item.id);
+                    const name = item.name || item.title || '';
+                    const poster = item.screenshot_uri || item.logo || item.poster || '';
+                    allMetas.push({
+                        id: `xlv:${i}_${listSig}:${encodeURIComponent(targetId)}:${encodeURIComponent(name)}:${encodeURIComponent(poster)}`,
+                        name: name,
+                        type: type,
+                        poster: poster,
+                        posterShape: 'poster'
+                    });
+                });
+            }
+        } catch (e) {
+            console.warn(`[SEARCH] Erro na lista ${i}: ${e.message}`);
+        }
     }
+
+    // Aplica paginação simples
+    const metas = allMetas.slice(skip, skip + 50);
+    console.log(`[SEARCH] Encontrados ${metas.length} resultados para "${query}"`);
+    return { metas };
+  }
 },
 
     async getMeta(type, id, configBase64) {
