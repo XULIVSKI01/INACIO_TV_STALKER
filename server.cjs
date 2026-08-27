@@ -391,41 +391,44 @@ if (configData.type === 'm3u') {
         // ----- XTREAM (redirect) -----
         if (configData.type === 'xtream') {
     const baseUrl = configData.url.replace(/\/$/, "");
-    const finalUrl = type === 'tv' ? `${baseUrl}/${configData.user}/${configData.pass}/${channelId}` :
-                     type === 'movie' ? `${baseUrl}/movie/${configData.user}/${configData.pass}/${channelId}` :
-                     `${baseUrl}/series/${configData.user}/${configData.pass}/${channelId}`;
+    
+    // Corrigir formato do URL do stream
+    let finalUrl;
+    if (type === 'tv') {
+        // Formato padrão: /live/USER/PASS/ID.ts
+        finalUrl = `${baseUrl}/live/${configData.user}/${configData.pass}/${channelId}.ts`;
+    } else if (type === 'movie') {
+        finalUrl = `${baseUrl}/movie/${configData.user}/${configData.pass}/${channelId}.${configData.container_extension || 'mp4'}`;
+    } else {
+        finalUrl = `${baseUrl}/series/${configData.user}/${configData.pass}/${channelId}`;
+    }
 
-    // 1. Obtém cookies de sessão via player_api.php
-    let sessionCookies = '';
+    console.log(`[PROXY TV] URL final Xtream: ${finalUrl}`);
+
+    // Headers com User-Agent de navegador moderno
+    const xtreamHeaders = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+        'Accept': '*/*',
+        'Connection': 'keep-alive',
+        'Referer': baseUrl + '/'
+    };
+
+    // Opcional: tentar obter cookies de sessão (mas não bloquear se não houver)
     try {
         const authUrl = `${baseUrl}/player_api.php?username=${encodeURIComponent(configData.user)}&password=${encodeURIComponent(configData.pass)}`;
         const authRes = await axios.get(authUrl, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3'
-            },
+            headers: { 'User-Agent': xtreamHeaders['User-Agent'] },
             timeout: 5000,
             validateStatus: () => true
         });
         const setCookie = authRes.headers['set-cookie'];
         if (setCookie) {
-            sessionCookies = Array.isArray(setCookie) ? setCookie.join('; ') : setCookie;
+            xtreamHeaders['Cookie'] = Array.isArray(setCookie) ? setCookie.join('; ') : setCookie;
         }
     } catch (e) {
-        console.warn(`[PROXY TV] Não foi possível obter cookies de sessão Xtream.`);
+        // Ignorar falha na obtenção de cookies
     }
 
-    // 2. Headers para o stream
-    const xtreamHeaders = {
-        'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
-        'Referer': baseUrl + '/c/',
-        'Accept': '*/*',
-        'Connection': 'keep-alive'
-    };
-    if (sessionCookies) {
-        xtreamHeaders['Cookie'] = sessionCookies;
-    }
-
-    // 3. Tenta o stream
     try {
         const axiosOpts = engine.getAxiosOpts(configData, {
             url: finalUrl,
@@ -448,7 +451,7 @@ if (configData.type === 'm3u') {
         console.error(`[PROXY TV] Erro no relay Xtream: ${e.message}`);
         return res.redirect(302, finalUrl);
     }
-    return;  // <-- importante: termina aqui para streams Xtream
+    return;
 }
 
         // ----- STALKER VOD -----
