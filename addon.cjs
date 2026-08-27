@@ -788,7 +788,7 @@ async searchCatalog(type, query, lists, skip = 0) {
     if (config?.useDirect !== false) {
         const b = config.url.trim().replace(/\/$/, "");
         if (type === 'tv') {
-            streams.push({ name: name, url: `${b}/${config.user}/${config.pass}/${sId}`, title: `📺 Directo TV`, behaviorHints: { notWebReady: true }, contentType: 'video/mp2t' });
+            streams.push({ name: name, url: `${b}/live/${config.user}/${config.pass}/${sId}.ts`, title: `📺 Directo TV`, behaviorHints: { notWebReady: true }, contentType: 'video/mp2t' });
         } else if (type === 'movie') {
             streams.push({ name: name, url: `${b}/movie/${config.user}/${config.pass}/${sId}`, title: `🎬 Directo Filme`, behaviorHints: { notWebReady: false } });
         } else if (type === 'series') {
