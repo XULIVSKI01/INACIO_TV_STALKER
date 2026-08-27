@@ -125,6 +125,31 @@ async function getTitleByExternalId(externalId) {
     return null;
 }
 
+async function searchInStalker(config, title, type) {
+    const auth = await this.authenticate(config);
+    if (!auth) return null;
+
+    const apiBase = `${auth.api}sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+    const opts = engine.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 10000 });
+    const sType = type === "movie" ? "vod" : "series";
+
+    const normalize = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, '');
+
+    for (let page = 0; page < 3; page++) {
+        try {
+            const r = await axios.get(`${apiBase}&type=${sType}&action=get_ordered_list&p=${page}`, opts);
+            const data = r.data?.js?.data || r.data?.js || [];
+            const items = Array.isArray(data) ? data : Object.values(data);
+            const found = items.find(item => {
+                const name = normalize(item.name || item.title || '');
+                return name.includes(normalize(title));
+            });
+            if (found) return found;
+        } catch(e) {}
+    }
+    return null;
+}
+
 const addon = {
     getAxiosOpts(config, extraOpts = {}) {
         let opts = { ...extraOpts };
@@ -798,6 +823,20 @@ const addon = {
 
         // Se o ID não é interno (xlv:...), trata-o como externo (IMDB/TMDB)
 if (!id.startsWith('xlv:')) {
+
+    if (!id.startsWith('xlv:')) {
+    // Extrair temporada e episódio se for série
+    let season = null;
+    let episode = null;
+    let cleanId = decodeURIComponent(id);
+
+    if (type === "series" && cleanId.includes(':')) {
+        const parts = cleanId.split(':');
+        cleanId = parts[0];          // IMDB ID
+        season = parts[1] || null;   // temporada
+        episode = parts[2] || null;  // episódio
+    }
+    
     const titleInfo = await getTitleByExternalId(decodeURIComponent(id));
     if (titleInfo && titleInfo.name) {
         const lists = this.parseConfig(configBase64);
@@ -832,18 +871,34 @@ if (!id.startsWith('xlv:')) {
             }
 
             if (foundItem) {
-                const targetId = (type === "series") ? (foundItem.id || foundItem.cmd) : (foundItem.cmd || foundItem.id);
-                const cmdUrl = await engine.createStreamLink(auth, config, String(targetId), type);
-                if (cmdUrl) {
-                    let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
-                    if (!cleanUrl.startsWith('http')) {
-                        const basePortal = config.url.split('/c/')[0];
-                        cleanUrl = basePortal + (cleanUrl.startsWith('/') ? '' : '/') + cleanUrl;
-                    }
-                    const streamTitle = type === 'movie' ? '🎬 Directo Filme' : `🍿 Directo Série - ${titleInfo.name}`;
-                    return { streams: [{ name: titleInfo.name, url: cleanUrl, title: streamTitle, behaviorHints: { notWebReady: false }, contentType: type === 'tv' ? 'video/mp2t' : undefined }] };
-                }
-            }
+    const targetId = (type === "series") ? (foundItem.id || foundItem.cmd) : (foundItem.cmd || foundItem.id);
+
+    // Se for série, extrai temporada/episódio do ID (ex: tt18546140:1:2)
+    let season = null;
+    let episode = null;
+    if (type === "series" && id.includes(':')) {
+        const parts = id.split(':');
+        season = parts[1] || null;
+        episode = parts[2] || null;
+    }
+
+    // Chama createStreamLink passando season e episode (se existirem)
+    const cmdUrl = await engine.createStreamLink(auth, config, String(targetId), type, season, episode);
+
+    if (cmdUrl) {
+        let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
+        if (!cleanUrl.startsWith('http')) {
+            const basePortal = config.url.split('/c/')[0];
+            cleanUrl = basePortal + (cleanUrl.startsWith('/') ? '' : '/') + cleanUrl;
+        }
+
+        const streamTitle = type === 'movie'
+            ? '🎬 Directo Filme'
+            : `🍿 Directo Série - ${titleInfo.name}${season ? ` S${season}` : ''}${episode ? ` E${episode}` : ''}`;
+
+        return { streams: [{ name: titleInfo.name, url: cleanUrl, title: streamTitle, behaviorHints: { notWebReady: false }, contentType: type === 'tv' ? 'video/mp2t' : undefined }] };
+    }
+}
         }
     }
     return { streams: [] };
