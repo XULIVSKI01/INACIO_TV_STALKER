@@ -392,10 +392,9 @@ if (configData.type === 'm3u') {
         if (configData.type === 'xtream') {
     const baseUrl = configData.url.replace(/\/$/, "");
     
-    // Corrigir formato do URL do stream
+    // Construção do URL do stream (já deve estar corrigido com /live/ e .ts)
     let finalUrl;
     if (type === 'tv') {
-        // Formato padrão: /live/USER/PASS/ID.ts
         finalUrl = `${baseUrl}/live/${configData.user}/${configData.pass}/${channelId}.ts`;
     } else if (type === 'movie') {
         finalUrl = `${baseUrl}/movie/${configData.user}/${configData.pass}/${channelId}.${configData.container_extension || 'mp4'}`;
@@ -405,7 +404,7 @@ if (configData.type === 'm3u') {
 
     console.log(`[PROXY TV] URL final Xtream: ${finalUrl}`);
 
-    // Headers com User-Agent de navegador moderno
+    // Headers semelhantes aos de um navegador
     const xtreamHeaders = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
         'Accept': '*/*',
@@ -413,7 +412,7 @@ if (configData.type === 'm3u') {
         'Referer': baseUrl + '/'
     };
 
-    // Opcional: tentar obter cookies de sessão (mas não bloquear se não houver)
+    // Tentar obter cookies de sessão (opcional)
     try {
         const authUrl = `${baseUrl}/player_api.php?username=${encodeURIComponent(configData.user)}&password=${encodeURIComponent(configData.pass)}`;
         const authRes = await axios.get(authUrl, {
@@ -426,29 +425,37 @@ if (configData.type === 'm3u') {
             xtreamHeaders['Cookie'] = Array.isArray(setCookie) ? setCookie.join('; ') : setCookie;
         }
     } catch (e) {
-        // Ignorar falha na obtenção de cookies
+        // Não é crítico
     }
 
+    // Usar FFmpeg para relay com reconexão automática
     try {
-        const axiosOpts = engine.getAxiosOpts(configData, {
-            url: finalUrl,
-            headers: xtreamHeaders,
-            responseType: 'stream',
-            timeout: 30000
-        });
-        const streamRes = await axios(axiosOpts);
+        const source = engine.startFfmpegRelay(
+            finalUrl,
+            xtreamHeaders,
+            configData.proxy,
+            false,   // legacyMode = false (usa flags modernas de reconexão)
+            null      // sem callback
+        );
+
+        if (!source) {
+            console.error('[PROXY TV] FFmpeg não devolveu stream.');
+            return res.status(502).end();
+        }
 
         res.writeHead(200, {
-            'Content-Type': streamRes.headers['content-type'] || 'video/mp2t',
+            'Content-Type': 'video/mp2t',
             'Connection': 'keep-alive',
             'Access-Control-Allow-Origin': '*'
         });
-        streamRes.data.pipe(res);
+        source.pipe(res);
+
         req.on('close', () => {
-            if (streamRes.data && !streamRes.data.destroyed) streamRes.data.destroy();
+            if (!source.destroyed) source.kill();
         });
     } catch (e) {
-        console.error(`[PROXY TV] Erro no relay Xtream: ${e.message}`);
+        console.error(`[PROXY TV] Erro no relay Xtream com FFmpeg: ${e.message}`);
+        // Fallback para redirect simples se o FFmpeg falhar completamente
         return res.redirect(302, finalUrl);
     }
     return;
