@@ -23,37 +23,6 @@ function cleanTitle(title) {
     return title.replace(/\[.*?\]/g, '').replace(/\(.*\)/g, '').replace(/(S\d+|T\d+).*/i, '').replace(/(1080p|720p|4k|uhd|hdtv|x264|x265|hevc|dual|latino|legendado|multi|v1|v2)/gi, '').trim();
 }
 
-async function getTitleByExternalId(externalId) {
-    try {
-        let url;
-        if (externalId.startsWith('tt')) {
-            // IMDB ID
-            url = `https://api.themoviedb.org/3/find/${externalId}?api_key=${TMDB_API_KEY}&external_source=imdb_id`;
-        } else {
-            // TMDB ID (assumindo que é um número)
-            const [tmdbType, tmdbId] = externalId.split(':');
-            if (tmdbType && tmdbId) {
-                url = `https://api.themoviedb.org/3/${tmdbType}/${tmdbId}?api_key=${TMDB_API_KEY}`;
-            } else {
-                return null;
-            }
-        }
-
-        const res = await axios.get(url);
-        if (res.data && res.data.movie_results && res.data.movie_results.length > 0) {
-            return { name: res.data.movie_results[0].title, year: res.data.movie_results[0].release_date?.split('-')[0] };
-        }
-        if (res.data && res.data.tv_results && res.data.tv_results.length > 0) {
-            return { name: res.data.tv_results[0].name, year: res.data.tv_results[0].first_air_date?.split('-')[0] };
-        }
-        if (res.data && res.data.title) return { name: res.data.title, year: res.data.release_date?.split('-')[0] };
-        if (res.data && res.data.name) return { name: res.data.name, year: res.data.first_air_date?.split('-')[0] };
-    } catch (e) {
-        console.warn(`[EXTERNAL ID] Erro: ${e.message}`);
-    }
-    return null;
-}
-
 async function parseM3U(url, config) {
     const res = await axios.get(url, {
         timeout: 15000,
@@ -125,6 +94,36 @@ async function parseM3U(url, config) {
         }
     };
 };
+
+async function getTitleByExternalId(externalId) {
+    try {
+        let url;
+        // Extrai IMDB ID se estiver num ID composto (ex: tt1234567:1:1)
+        const imdbMatch = externalId.match(/tt\d+/);
+        if (imdbMatch) {
+            url = `https://api.themoviedb.org/3/find/${imdbMatch[0]}?api_key=${TMDB_API_KEY}&external_source=imdb_id`;
+        } else {
+            // TMDB ID puro ou composto (ex: tmdb:12345 ou 12345)
+            const parts = externalId.split(':');
+            const tmdbId = parts[parts.length - 1]; // último elemento é o ID
+            const tmdbType = parts.length > 1 ? parts[0] : (type === 'series' ? 'tv' : 'movie');
+            url = `https://api.themoviedb.org/3/${tmdbType}/${tmdbId}?api_key=${TMDB_API_KEY}`;
+        }
+
+        const res = await axios.get(url);
+        if (res.data && res.data.movie_results && res.data.movie_results.length > 0) {
+            return { name: res.data.movie_results[0].title, year: res.data.movie_results[0].release_date?.split('-')[0] };
+        }
+        if (res.data && res.data.tv_results && res.data.tv_results.length > 0) {
+            return { name: res.data.tv_results[0].name, year: res.data.tv_results[0].first_air_date?.split('-')[0] };
+        }
+        if (res.data && res.data.title) return { name: res.data.title, year: res.data.release_date?.split('-')[0] };
+        if (res.data && res.data.name) return { name: res.data.name, year: res.data.first_air_date?.split('-')[0] };
+    } catch (e) {
+        console.warn(`[EXTERNAL ID] Erro: ${e.message}`);
+    }
+    return null;
+}
 
 const addon = {
     getAxiosOpts(config, extraOpts = {}) {
@@ -801,49 +800,54 @@ const addon = {
 if (!id.startsWith('xlv:')) {
     const titleInfo = await getTitleByExternalId(decodeURIComponent(id));
     if (titleInfo && titleInfo.name) {
-        // Usa a primeira lista configurada (podes adaptar para percorrer todas)
         const lists = this.parseConfig(configBase64);
-        const config = lists[0]; // ⚠️ Ajusta se precisares de múltiplas listas
-        if (config) {
+
+        // Tenta em todas as listas configuradas
+        for (let listIdx = 0; listIdx < lists.length; listIdx++) {
+            const config = lists[listIdx];
+            if (!config || config.type === 'm3u') continue; // M3U não tem metadados de pesquisa
+
             const auth = await this.authenticate(config);
-            if (auth) {
-                const apiBase = `${auth.api}sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
-                const opts = engine.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 10000 });
-                const sType = type === "movie" ? "vod" : "series";
+            if (!auth) continue;
 
-                let foundItem = null;
-                for (let page = 0; page < 3; page++) {
-                    try {
-                        const r = await axios.get(`${apiBase}&type=${sType}&action=get_ordered_list&p=${page}`, opts);
-                        const data = r.data?.js?.data || r.data?.js || [];
-                        const items = Array.isArray(data) ? data : Object.values(data);
-                        foundItem = items.find(item => {
-                            const name = (item.name || item.title || '').toLowerCase();
-                            return name.includes(titleInfo.name.toLowerCase());
-                        });
-                        if (foundItem) break;
-                    } catch (e) { }
-                }
+            const apiBase = `${auth.api}sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+            const opts = engine.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 10000 });
+            const sType = type === "movie" ? "vod" : "series";
 
-                if (foundItem) {
-                    const targetId = (type === "series") ? (foundItem.id || foundItem.cmd) : (foundItem.cmd || foundItem.id);
-                    const cmdUrl = await engine.createStreamLink(auth, config, String(targetId), type);
-                    if (cmdUrl) {
-                        let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
-                        if (!cleanUrl.startsWith('http')) {
-                            const basePortal = config.url.split('/c/')[0];
-                            cleanUrl = basePortal + (cleanUrl.startsWith('/') ? '' : '/') + cleanUrl;
-                        }
-                        const streamTitle = type === 'movie' ? '🎬 Directo Filme' : `🍿 Directo Série - ${titleInfo.name}`;
-                        return { streams: [{ name: titleInfo.name, url: cleanUrl, title: streamTitle, behaviorHints: { notWebReady: false }, contentType: type === 'tv' ? 'video/mp2t' : undefined }] };
+            let foundItem = null;
+            for (let page = 0; page < 5; page++) {
+                try {
+                    const r = await axios.get(`${apiBase}&type=${sType}&action=get_ordered_list&p=${page}`, opts);
+                    const data = r.data?.js?.data || r.data?.js || [];
+                    const items = Array.isArray(data) ? data : Object.values(data);
+                    // Comparação flexível: remove acentos e caracteres especiais
+                    const normalize = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, '');
+                    const targetName = normalize(titleInfo.name);
+                    foundItem = items.find(item => {
+                        const name = normalize(item.name || item.title || '');
+                        return name.includes(targetName);
+                    });
+                    if (foundItem) break;
+                } catch (e) { }
+            }
+
+            if (foundItem) {
+                const targetId = (type === "series") ? (foundItem.id || foundItem.cmd) : (foundItem.cmd || foundItem.id);
+                const cmdUrl = await engine.createStreamLink(auth, config, String(targetId), type);
+                if (cmdUrl) {
+                    let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
+                    if (!cleanUrl.startsWith('http')) {
+                        const basePortal = config.url.split('/c/')[0];
+                        cleanUrl = basePortal + (cleanUrl.startsWith('/') ? '' : '/') + cleanUrl;
                     }
+                    const streamTitle = type === 'movie' ? '🎬 Directo Filme' : `🍿 Directo Série - ${titleInfo.name}`;
+                    return { streams: [{ name: titleInfo.name, url: cleanUrl, title: streamTitle, behaviorHints: { notWebReady: false }, contentType: type === 'tv' ? 'video/mp2t' : undefined }] };
                 }
             }
         }
     }
     return { streams: [] };
 }
-
         const parts = id.split(":"); 
         const lIdxParts = parts[1].split("_");
         const lIdx = parseInt(lIdxParts[0]);
