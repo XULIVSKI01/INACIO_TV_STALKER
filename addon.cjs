@@ -440,7 +440,7 @@ const addon = {
                 }
             }
             metas = stalkerData.filter(i => i && (i.id || i.cmd)).map(m => {
-                let targetId = (type === "series") ? (m.id || m.cmd) : (m.cmd || m.id);
+                let targetId = m.id || m.cmd;   // prioridade ao campo 'id'
                 return {
                     id: `xlv:${lIdx}_${listSig}:${encodeURIComponent(targetId)}:${encodeURIComponent(m.name || m.title)}:${encodeURIComponent(m.logo || m.screenshot_uri || '')}`,
                     name: m.name || m.title, type: type, poster: m.logo || m.screenshot_uri, posterShape: type === "tv" ? "landscape" : "poster"
