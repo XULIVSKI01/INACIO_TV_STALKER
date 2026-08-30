@@ -391,74 +391,64 @@ if (configData.type === 'm3u') {
         // ----- XTREAM (redirect) -----
         if (configData.type === 'xtream') {
     const baseUrl = configData.url.replace(/\/$/, "");
-    
-    // Construção do URL do stream (já deve estar corrigido com /live/ e .ts)
-    let finalUrl;
-    if (type === 'tv') {
-        finalUrl = `${baseUrl}/live/${configData.user}/${configData.pass}/${channelId}.ts`;
-    } else if (type === 'movie') {
-        finalUrl = `${baseUrl}/movie/${configData.user}/${configData.pass}/${channelId}.${configData.container_extension || 'mp4'}`;
-    } else {
-        finalUrl = `${baseUrl}/series/${configData.user}/${configData.pass}/${channelId}`;
-    }
+    const finalUrl = type === 'tv' ? `${baseUrl}/${configData.user}/${configData.pass}/${channelId}` :
+                     type === 'movie' ? `${baseUrl}/movie/${configData.user}/${configData.pass}/${channelId}` :
+                     `${baseUrl}/series/${configData.user}/${configData.pass}/${channelId}`;
 
-    console.log(`[PROXY TV] URL final Xtream: ${finalUrl}`);
-
-    // Headers semelhantes aos de um navegador
-    const xtreamHeaders = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-        'Accept': '*/*',
-        'Connection': 'keep-alive',
-        'Referer': baseUrl + '/'
-    };
-
-    // Tentar obter cookies de sessão (opcional)
+    // 1. Obtém cookies de sessão via player_api.php
+    let sessionCookies = '';
     try {
         const authUrl = `${baseUrl}/player_api.php?username=${encodeURIComponent(configData.user)}&password=${encodeURIComponent(configData.pass)}`;
         const authRes = await axios.get(authUrl, {
-            headers: { 'User-Agent': xtreamHeaders['User-Agent'] },
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3'
+            },
             timeout: 5000,
             validateStatus: () => true
         });
         const setCookie = authRes.headers['set-cookie'];
         if (setCookie) {
-            xtreamHeaders['Cookie'] = Array.isArray(setCookie) ? setCookie.join('; ') : setCookie;
+            sessionCookies = Array.isArray(setCookie) ? setCookie.join('; ') : setCookie;
         }
     } catch (e) {
-        // Não é crítico
+        console.warn(`[PROXY TV] Não foi possível obter cookies de sessão Xtream.`);
     }
 
-    // Usar FFmpeg para relay com reconexão automática
-    try {
-        const source = engine.startFfmpegRelay(
-            finalUrl,
-            xtreamHeaders,
-            configData.proxy,
-            false,   // legacyMode = false (usa flags modernas de reconexão)
-            null      // sem callback
-        );
+    // 2. Headers para o stream
+    const xtreamHeaders = {
+        'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
+        'Referer': baseUrl + '/c/',
+        'Accept': '*/*',
+        'Connection': 'keep-alive'
+    };
+    if (sessionCookies) {
+        xtreamHeaders['Cookie'] = sessionCookies;
+    }
 
-        if (!source) {
-            console.error('[PROXY TV] FFmpeg não devolveu stream.');
-            return res.status(502).end();
-        }
+    // 3. Tenta o stream
+    try {
+        const axiosOpts = engine.getAxiosOpts(configData, {
+            url: finalUrl,
+            headers: xtreamHeaders,
+            responseType: 'stream',
+            timeout: 30000
+        });
+        const streamRes = await axios(axiosOpts);
 
         res.writeHead(200, {
-            'Content-Type': 'video/mp2t',
+            'Content-Type': streamRes.headers['content-type'] || 'video/mp2t',
             'Connection': 'keep-alive',
             'Access-Control-Allow-Origin': '*'
         });
-        source.pipe(res);
-
+        streamRes.data.pipe(res);
         req.on('close', () => {
-            if (!source.destroyed) source.kill();
+            if (streamRes.data && !streamRes.data.destroyed) streamRes.data.destroy();
         });
     } catch (e) {
-        console.error(`[PROXY TV] Erro no relay Xtream com FFmpeg: ${e.message}`);
-        // Fallback para redirect simples se o FFmpeg falhar completamente
+        console.error(`[PROXY TV] Erro no relay Xtream: ${e.message}`);
         return res.redirect(302, finalUrl);
     }
-    return;
+    return;  // <-- importante: termina aqui para streams Xtream
 }
 
         // ----- STALKER VOD -----
