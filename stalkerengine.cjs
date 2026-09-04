@@ -1,4 +1,5 @@
 // stalkerengine.cjs – Motor centralizado para portais Stalker
+/*
 const axios = require("axios");
 const crypto = require("crypto");
 const https = require('https');
@@ -517,3 +518,4 @@ module.exports = {
     tryFfmpegStreamLegacy,
     tryFfmpegExact
 };
+*/
