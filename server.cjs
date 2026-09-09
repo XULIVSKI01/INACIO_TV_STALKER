@@ -678,7 +678,6 @@ const execFfmpegLegacy = (urlToPlay, streamHeaders) => {
     });
 };
 
-// ---- Funções de pipeline ----
 async function getSource(urlToPlay) {
     const rawHeaders = auth.authData.headers || {};
     const cookieString = rawHeaders['Cookie'] || '';
@@ -735,6 +734,7 @@ const execStream = async (urlToPlay, isRetry = false) => {
         const source = await getSource(urlToPlay);
         if (!source) throw new Error('Falha ao obter fonte');
 
+        // Guarda o URL que funcionou
         global.lastGoodUrl[streamKey] = urlToPlay;
 
         let broadcaster;
@@ -767,7 +767,7 @@ const execStream = async (urlToPlay, isRetry = false) => {
         delete global.pendingTvPromises[streamKey];
         global.linkAttempts[streamKey] = 0;
 
-        // Renovação proativa
+        // ========== RENOVAÇÃO PROATIVA ==========
         const renewInterval = setInterval(async () => {
             console.log(`[PROXY TV] Renovando link proativamente...`);
             try {
@@ -788,8 +788,11 @@ const execStream = async (urlToPlay, isRetry = false) => {
                         if (newSource) {
                             const cached = global.activeTvStreams[streamKey];
                             if (cached && cached.broadcaster) {
+                                // Mata a fonte antiga
                                 if (cached.source && cached.source.killProcess) cached.source.killProcess();
                                 else if (cached.source && cached.source.destroy) cached.source.destroy();
+
+                                // Pipe da nova fonte para o mesmo broadcaster
                                 newSource.pipe(cached.broadcaster, { end: false });
                                 cached.source = newSource;
                                 global.lastGoodUrl[streamKey] = cUrl;
@@ -801,10 +804,11 @@ const execStream = async (urlToPlay, isRetry = false) => {
             } catch (e) {
                 console.warn(`[PROXY TV] Renovação proativa falhou: ${e.message}`);
             }
-        }, 10 * 60 * 1000);
+        }, 10 * 60 * 1000); // 10 minutos
 
         global.activeTvStreams[streamKey].renewTimer = renewInterval;
 
+        // Limpa o intervalo quando a stream terminar ou o cliente sair
         source.on('end', () => {
             clearInterval(renewInterval);
             console.log('[PROXY TV] Stream terminou, tentando reconectar...');
@@ -839,6 +843,7 @@ const execStream = async (urlToPlay, isRetry = false) => {
     } catch (e) {
         console.error(`[PROXY TV] Erro ao obter stream: ${e.message}`);
         if (!isRetry) {
+            // Tenta renovar token e link
             try {
                 const newAuth = await engine.authenticate(configData, configData.proxy);
                 if (newAuth) {
@@ -1034,4 +1039,3 @@ seriesCategories = seriesCategories.filter(cat => !isUndesired(cat));
 });
 
 app.listen(PORT, "0.0.0.0", () => console.log(`🚀 Addon Online na porta ${PORT}`));
-    
