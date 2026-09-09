@@ -643,7 +643,7 @@ const sendError = (msg) => {
     delete global.pendingTvPromises[streamKey];
     setTimeout(() => { delete global.linkAttempts[streamKey]; }, 60000);
 };
-/*
+
 // ---- Funções de pipeline ----
 const execFfmpegLegacy = (urlToPlay, streamHeaders) => {
     return new Promise((resolve, reject) => {
@@ -677,7 +677,7 @@ const execFfmpegLegacy = (urlToPlay, streamHeaders) => {
         req.on('close', () => { if (!ffmpeg.killed) ffmpeg.kill('SIGKILL'); });
     });
 };
-*/
+
 // ---- Funções de pipeline ----
 async function getSource(urlToPlay) {
     const rawHeaders = auth.authData.headers || {};
