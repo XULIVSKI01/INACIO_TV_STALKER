@@ -586,6 +586,7 @@ function connectToExistingBroadcaster(cached, res, streamKey, req) {
     if (cached.source && !cached.source.destroyed && cached.broadcaster) {
         console.log(`[PROXY TV] Reconexão rápida detetada. A ligar ao Broadcaster existente...`);
         if (cached.timeout) { clearTimeout(cached.timeout); cached.timeout = null; }
+            reconnectAttempts = 0; // reset ao reconectar cliente
         res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Connection': 'keep-alive', 'Access-Control-Allow-Origin': '*' });
         cached.broadcaster.pipe(res);
         cached.clients.add(res);
@@ -819,7 +820,28 @@ const execStream = async (urlToPlay, isRetry = false) => {
             console.log(`[PROXY TV] Erro na stream: ${err.message}. Tentando reconectar...`);
             attemptReconnect();
         });
-
+      
+       req.on('close', () => {
+    const cached = global.activeTvStreams[streamKey];
+    if (cached) {
+        if (cached.renewTimer) clearInterval(cached.renewTimer);
+        cached.clients.delete(res);
+        cached.broadcaster.unpipe(res);
+        if (cached.clients.size === 0) {
+            if (cached.timeout) clearTimeout(cached.timeout);
+            cached.timeout = setTimeout(() => {
+                if (cached.clients && cached.clients.size === 0) {
+                    console.log(`[PROXY TV] Sem clientes há 30s, a libertar sessão.`);
+                    if (cached.source && cached.source.killProcess) cached.source.killProcess();
+                    else if (cached.source && cached.source.destroy) cached.source.destroy();
+                    cached.broadcaster.destroy();
+                    delete global.activeTvStreams[streamKey];
+                }
+            }, 30 * 1000);
+        }
+    }
+});
+/*
         req.on('close', () => {
             const cached = global.activeTvStreams[streamKey];
             if (cached) {
@@ -839,7 +861,7 @@ const execStream = async (urlToPlay, isRetry = false) => {
                 }
             }
         });
-
+*/
     } catch (e) {
         console.error(`[PROXY TV] Erro ao obter stream: ${e.message}`);
         if (!isRetry) {
@@ -867,6 +889,74 @@ const execStream = async (urlToPlay, isRetry = false) => {
     }
 };
 
+async function attemptReconnect() {
+    const cached = global.activeTvStreams[streamKey];
+    if (!cached || !cached.broadcaster || cached.broadcaster.destroyed) {
+        console.log(`[PROXY TV] Sessão já não existe, a abortar reconexão.`);
+        return;
+    }
+
+    reconnectAttempts++;
+    if (reconnectAttempts > MAX_RECONNECT) {
+        console.log(`[PROXY TV] Máximo de tentativas de reconexão atingido. A fechar.`);
+        try { cached.broadcaster.end(); } catch(e){}
+        if (cached.source) {
+            if (cached.source.killProcess) cached.source.killProcess();
+            else if (cached.source.destroy) cached.source.destroy();
+        }
+        delete global.activeTvStreams[streamKey];
+        return;
+    }
+
+    console.log(`[PROXY TV] Tentativa de reconexão ${reconnectAttempts}/${MAX_RECONNECT}...`);
+
+    try {
+        // 1. Obter novo URL (renova token se necessário)
+        let newUrl = global.lastGoodUrl[streamKey] || possibleUrl;
+        if (!isDirectLink) {
+            const newAuth = await engine.authenticate(configData, configData.proxy);
+            if (!newAuth) throw new Error('Falha na autenticação');
+            auth = newAuth;
+            const linkUrl = `${newAuth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${newAuth.authData.sn}&token=${newAuth.token}&long_lived=1&JsHttpRequest=1-0`;
+            const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: newAuth.authData.headers }));
+            let streamUrl = linkRes.data?.js?.cmd || linkRes.data?.js || linkRes.data?.cmd;
+            if (!streamUrl) throw new Error('Link não obtido');
+            newUrl = streamUrl.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "").trim();
+            if (!newUrl.startsWith('http')) {
+                const basePortal = configData.url.split('/c/')[0];
+                newUrl = basePortal + (newUrl.startsWith('/') ? '' : '/') + newUrl;
+            }
+        }
+
+        // 2. Criar nova fonte
+        const newSource = await getSource(newUrl);
+        if (!newSource) throw new Error('Fonte indisponível');
+
+        // 3. Matar a fonte antiga (se ainda existir)
+        if (cached.source) {
+            if (cached.source.killProcess) cached.source.killProcess();
+            else if (cached.source.destroy) cached.source.destroy();
+        }
+
+        // 4. Ligar a nova fonte ao MESMO broadcaster (os clientes não notam)
+        newSource.pipe(cached.broadcaster, { end: false });
+        cached.source = newSource;
+        global.lastGoodUrl[streamKey] = newUrl;
+
+        // 5. Repor contador e voltar a ouvir falhas
+        reconnectAttempts = 0;
+        newSource.on('end', () => attemptReconnect());
+        newSource.on('error', () => attemptReconnect());
+
+        console.log(`[PROXY TV] Reconectado com sucesso.`);
+    } catch (err) {
+        console.log(`[PROXY TV] Reconexão falhou: ${err.message}`);
+        await new Promise(r => setTimeout(r, 2000));
+        await attemptReconnect();
+    }
+}      
+      
+/*
 async function attemptReconnect() {
     if (reconnectAttempts >= MAX_RECONNECT) {
         if (global.activeTvStreams[streamKey]) {
@@ -902,7 +992,7 @@ async function attemptReconnect() {
         await attemptReconnect();
     }
 }
-
+*/
 // Início da lógica de obtenção do primeiro link
 try {
     auth = await engine.authenticate(configData, configData.proxy);
