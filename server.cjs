@@ -575,8 +575,29 @@ const streamKey = `${configData.url}_${channelId}`;
 if (!global.activeTvStreams) global.activeTvStreams = {};
 if (!global.pendingTvPromises) global.pendingTvPromises = {};
 if (!global.linkAttempts) global.linkAttempts = {};
+if (!global.clientSessions) global.clientSessions = {};   // NOVO
 if (!global.linkAttempts[streamKey]) global.linkAttempts[streamKey] = 0;
 const MAX_LINK_ATTEMPTS = 2;
+
+// NOVO: identificar cliente e fechar sessão anterior se mudou de canal
+const clientId = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown') + '_' + (configData.mac || 'nomac');
+const previousKey = global.clientSessions[clientId];
+if (previousKey && previousKey !== streamKey) {
+    const oldCached = global.activeTvStreams[previousKey];
+    if (oldCached) {
+        console.log(`[PROXY TV] Cliente mudou de canal. A fechar sessão antiga: ${previousKey}`);
+        try {
+            if (oldCached.renewTimer) clearInterval(oldCached.renewTimer);
+            if (oldCached.source) {
+                if (oldCached.source.killProcess) oldCached.source.killProcess();
+                else if (oldCached.source.destroy) oldCached.source.destroy();
+            }
+            if (oldCached.broadcaster) oldCached.broadcaster.destroy();
+        } catch(e) {}
+        delete global.activeTvStreams[previousKey];
+    }
+}
+global.clientSessions[clientId] = streamKey;
 
 // Guarda o último URL que funcionou (para reconexão rápida sem falar com o portal)
 if (!global.lastGoodUrl) global.lastGoodUrl = {};
@@ -820,27 +841,59 @@ const execStream = async (urlToPlay, isRetry = false) => {
             console.log(`[PROXY TV] Erro na stream: ${err.message}. Tentando reconectar...`);
             attemptReconnect();
         });
-      
-       req.on('close', () => {
-    const cached = global.activeTvStreams[streamKey];
-    if (cached) {
-        if (cached.renewTimer) clearInterval(cached.renewTimer);
-        cached.clients.delete(res);
-        cached.broadcaster.unpipe(res);
-        if (cached.clients.size === 0) {
-            if (cached.timeout) clearTimeout(cached.timeout);
-            cached.timeout = setTimeout(() => {
-                if (cached.clients && cached.clients.size === 0) {
-                    console.log(`[PROXY TV] Sem clientes há 30s, a libertar sessão.`);
-                    if (cached.source && cached.source.killProcess) cached.source.killProcess();
-                    else if (cached.source && cached.source.destroy) cached.source.destroy();
-                    cached.broadcaster.destroy();
-                    delete global.activeTvStreams[streamKey];
+
+        req.on('close', () => {
+            // NOVO: limpar sessão do cliente
+            if (global.clientSessions && global.clientSessions[clientId] === streamKey) {
+                delete global.clientSessions[clientId];
+            }
+
+            const cached = global.activeTvStreams[streamKey];
+            if (cached) {
+                if (cached.renewTimer) clearInterval(cached.renewTimer);
+                cached.clients.delete(res);
+                cached.broadcaster.unpipe(res);
+                if (cached.clients.size === 0) {
+                    if (cached.timeout) clearTimeout(cached.timeout);
+                    cached.timeout = setTimeout(() => {
+                        if (cached.clients && cached.clients.size === 0) {
+                            console.log(`[PROXY TV] Sem clientes há 15s, a libertar sessão.`);
+                            if (cached.source && cached.source.killProcess) cached.source.killProcess();
+                            else if (cached.source && cached.source.destroy) cached.source.destroy();
+                            cached.broadcaster.destroy();
+                            delete global.activeTvStreams[streamKey];
+                        }
+                    }, 15 * 1000);
                 }
-            }, 30 * 1000);
+            }
+        });
+
+    } catch (e) {
+        console.error(`[PROXY TV] Erro ao obter stream: ${e.message}`);
+        if (!isRetry) {
+            // Tenta renovar token e link
+            try {
+                const newAuth = await engine.authenticate(configData, configData.proxy);
+                if (newAuth) {
+                    auth = newAuth;
+                    const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&long_lived=1&JsHttpRequest=1-0`;
+                    const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers }));
+                    let newStreamUrl = linkRes.data?.js?.cmd || linkRes.data?.js || linkRes.data?.cmd;
+                    if (newStreamUrl) {
+                        let cUrl = newStreamUrl.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "").trim();
+                        if (!cUrl.startsWith('http')) {
+                            const basePortal = configData.url.split('/c/')[0];
+                            cUrl = basePortal + (cUrl.startsWith('/') ? '' : '/') + cUrl;
+                        }
+                        return execStream(cUrl, true);
+                    }
+                }
+            } catch(err) {}
         }
+        delete global.pendingTvPromises[streamKey];
+        if (!res.headersSent) res.status(502).end();
     }
-});
+};
 /*
         req.on('close', () => {
             const cached = global.activeTvStreams[streamKey];
