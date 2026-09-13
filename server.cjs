@@ -693,7 +693,6 @@ async function getSource(urlToPlay) {
     };
 
     if (stalkerCmd.trim().toLowerCase().startsWith('ffmpeg')) {
-        // Usa FFmpeg com reconexão automática
         const ffmpegHeaders = Object.entries({
             ...rawHeaders,
             'Cookie': cookieString,
@@ -703,7 +702,7 @@ async function getSource(urlToPlay) {
             'Connection': 'keep-alive'
         }).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
 
-        const source = spawn('ffmpeg', [
+        const ffmpeg = spawn('ffmpeg', [
             '-headers', ffmpegHeaders,
             '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
             '-fflags', 'nobuffer+discardcorrupt+genpts',
@@ -713,11 +712,12 @@ async function getSource(urlToPlay) {
             '-f', 'mpegts',
             '-loglevel', 'error',
             'pipe:1'
-        ]).stdout;
-        source.killProcess = () => { if (!source.killed) source.kill('SIGKILL'); };
+        ]);
+        const source = ffmpeg.stdout;
+        source.killProcess = () => { if (!ffmpeg.killed) ffmpeg.kill('SIGKILL'); };
+        ffmpeg.on('error', () => { if (!source.destroyed) source.destroy(); });
         return source;
     } else {
-        // Usa Axios direto
         const axiosOpts = addon.getAxiosOpts(configData, {
             url: urlToPlay,
             headers: streamHeaders,
@@ -725,7 +725,9 @@ async function getSource(urlToPlay) {
             timeout: 8000
         });
         const streamRes = await axios(axiosOpts);
-        return streamRes.data;
+        const source = streamRes.data;
+        source.killProcess = () => { if (!source.destroyed) source.destroy(); };
+        return source;
     }
 }
 
