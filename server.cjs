@@ -578,6 +578,9 @@ if (!global.linkAttempts) global.linkAttempts = {};
 if (!global.linkAttempts[streamKey]) global.linkAttempts[streamKey] = 0;
 const MAX_LINK_ATTEMPTS = 2;
 
+let reconnectAttempts = 0;
+const MAX_RECONNECT = 5;
+      
 // Guarda o último URL que funcionou (para reconexão rápida sem falar com o portal)
 if (!global.lastGoodUrl) global.lastGoodUrl = {};
 
@@ -634,8 +637,7 @@ const isDirectLink = (possibleUrl.startsWith('http://') || possibleUrl.startsWit
 
 const proxyUrl = configData.proxy ? configData.proxy.trim() : null;
 
-let reconnectAttempts = 0;
-const MAX_RECONNECT = 5;
+
 const sendError = (msg) => {
     if (!res.headersSent) {
         console.error(`[PROXY TV] ${msg}`);
