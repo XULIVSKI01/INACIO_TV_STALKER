@@ -59,21 +59,32 @@ app.get("/configure", (req, res) => {
             .proxy-box { background: rgba(255, 165, 0, 0.1); border: 1px dashed #ffa500; padding: 10px; border-radius: 8px; margin-top: 10px; }
             .proxy-box label { color: #ffa500 !important; }
             /* Estilos para o modal de categorias */
-            .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); overflow-y: auto; }
-            .modal-content { background: #1b1d30; margin: 40px auto; padding: 25px; border-radius: 12px; max-width: 500px; position: relative; }
-            .close-modal { position: absolute; top: 10px; right: 20px; color: #aaa; font-size: 28px; font-weight: bold; cursor: pointer; }
-            .close-modal:hover { color: white; }
-            .cat-group { margin: 15px 0; }
-            .cat-group h4 { color: #007bff; margin: 10px 0 5px; }
-            .cat-checkbox { margin: 3px 0; display: flex; align-items: center; }
-            .cat-checkbox input { width: auto; margin-right: 8px; }
-            .loading-spinner { text-align: center; color: #aaa; }
+            .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); overflow-y: auto; }
+.modal-content { background: #15172a; margin: 20px auto; padding: 16px; border-radius: 10px; max-width: 480px; position: relative; }
+.close-modal { position: absolute; top: 6px; right: 14px; color: #888; font-size: 24px; cursor: pointer; }
+.close-modal:hover { color: white; }
+.cat-group { margin: 10px 0; padding-bottom: 8px; border-bottom: 1px solid #252740; }
+.cat-group h4 { color: #007bff; margin: 6px 0 4px; font-size: 13px; font-weight: 600; }
+.cat-type-row { display: flex; align-items: center; gap: 6px; margin: 8px 0 4px; font-size: 12px; }
+.cat-type-row strong { color: #007bff; }
+.cat-type-row span.hint { color: #666; font-size: 10px; }
+.cat-grid { display: grid; grid-template-columns: 1fr; gap: 3px; }
+.cat-checkbox { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 4px; font-size: 12px; }
+.cat-checkbox:hover { background: #1e2035; }
+.cat-checkbox input[type="checkbox"] { width: 13px; height: 13px; margin: 0; flex-shrink: 0; }
+.cat-checkbox label { display: flex; align-items: center; gap: 6px; flex: 1; cursor: pointer; color: #ddd; min-width: 0; }
+.cat-checkbox label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cat-checkbox .cat-rename { flex: 1; min-width: 0; padding: 3px 6px; border-radius: 4px; border: 1px solid #2a2d45; background: #0f1120; color: #aaa; font-size: 11px; box-sizing: border-box; }
+.cat-checkbox .cat-rename:focus { border-color: #007bff; outline: none; color: #fff; }
+.cat-checkbox .cat-rename::placeholder { color: #555; font-style: italic; }
+.cat-master { width: 13px; height: 13px; margin: 0; }
+.loading-spinner { text-align: center; color: #aaa; font-size: 12px; padding: 20px; }
         </style></head>
         <body>
             <div class="container">
                 <h2 style="text-align:center">𝕏𝕋𝔸𝕃𝕂𝔼ℝ 𝕀𝕀</h2>
                 <div id="lists-container"></div>
-                <button class="add-btn" onclick="addList()">+ Adicionar Nova Lista (Máx 5)</button>
+                <button class="add-btn" onclick="saveCategories()" style="margin-top:14px; padding:8px; font-size:13px;">Confirmar</button>
                 <button class="categories-btn" onclick="openCategoryModal()">📋 Escolhe aqui as categorias</button>
                 <button class="install-btn" onclick="install()">🚀 INSTALAR NO STREMIO</button>
             </div>
@@ -81,7 +92,8 @@ app.get("/configure", (req, res) => {
             <div id="categoryModal" class="modal">
                 <div class="modal-content">
                     <span class="close-modal" onclick="closeCategoryModal()">&times;</span>
-                    <h3>Escolhe as categorias a instalar</h3>
+                    <h3 style="margin:0 0 10px; font-size:15px; color:#007bff;">Categorias</h3>
+<p style="color:#666; font-size:11px; margin:0 0 8px;">Deixa em branco para manter o nome original. Escreve para personalizar.</p>
                     <div id="categoryCheckboxes"></div>
                     <button class="add-btn" onclick="saveCategories()" style="margin-top:20px;">✅ Confirmar seleção</button>
                 </div>
@@ -245,13 +257,14 @@ app.get("/configure", (req, res) => {
     const isFirstConfig = !selectedCategories[i];
     const savedItems = (selectedCategories[i] && selectedCategories[i][type]) ? selectedCategories[i][type] : [];
 
-    html += \`<p style="color:#aaa; margin:12px 0 4px; display:flex; align-items:center; gap:8px;">
+    html += \`<div class="cat-type-row">
         <input type="checkbox" class="cat-master" data-group="\${groupId}" \${isFirstConfig ? 'checked' : ''} onchange="toggleAllCats('\${groupId}', this.checked)">
-        <strong style="color:#007bff; font-size:14px;">\${typeLabel}</strong>
-        <span style="color:#666; font-size:11px;">(marcar/desmarcar todas)</span>
-    </p>\`;
+        <strong>\${typeLabel}</strong>
+        <span class="hint">(todos)</span>
+    </div>\`;
 
     if (cats[type] && cats[type].length > 0) {
+        html += '<div class="cat-grid">';
         cats[type].forEach(cat => {
             let isChecked = isFirstConfig;
             let customName = '';
@@ -266,13 +279,14 @@ app.get("/configure", (req, res) => {
             html += \`<div class="cat-checkbox">
                 <label>
                     <input type="checkbox" class="cat-check" data-list="\${i}" data-type="\${type}" data-group="\${groupId}" value="\${cat}" \${isChecked ? 'checked' : ''} onchange="updateMasterCheckbox('\${groupId}')">
-                    <span style="color:#ddd;">\${cat}</span>
+                    <span title="\${cat}">\${cat}</span>
                 </label>
-                <input type="text" class="cat-rename" data-list="\${i}" data-type="\${type}" data-original="\${cat}" placeholder="Nome a mostrar no Stremio (opcional)" value="\${customName}">
+                <input type="text" class="cat-rename" data-list="\${i}" data-type="\${type}" data-original="\${cat}" placeholder="novo nome" value="\${customName}">
             </div>\`;
         });
+        html += '</div>';
     } else {
-        html += '<p style="color: #666; font-size:12px;">Nenhuma categoria disponível</p>';
+        html += '<p style="color: #555; font-size:11px; margin:2px 0;">Sem categorias</p>';
     }
 });
                         } catch (e) {
