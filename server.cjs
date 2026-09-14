@@ -59,40 +59,21 @@ app.get("/configure", (req, res) => {
             .proxy-box { background: rgba(255, 165, 0, 0.1); border: 1px dashed #ffa500; padding: 10px; border-radius: 8px; margin-top: 10px; }
             .proxy-box label { color: #ffa500 !important; }
             /* Estilos para o modal de categorias */
-            .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); overflow-y: auto; }
-.modal-content { background: #15172a; margin: 20px auto; padding: 16px; border-radius: 10px; max-width: 480px; position: relative; }
-.close-modal { position: absolute; top: 6px; right: 14px; color: #888; font-size: 24px; cursor: pointer; }
-.close-modal:hover { color: white; }
-.cat-group { margin: 10px 0; padding-bottom: 8px; border-bottom: 1px solid #252740; }
-.cat-group h4 { color: #007bff; margin: 6px 0 4px; font-size: 13px; font-weight: 600; }
-.cat-type-row { display: flex; align-items: center; gap: 6px; margin: 8px 0 4px; font-size: 12px; }
-.cat-type-row strong { color: #007bff; }
-.cat-type-row span.hint { color: #666; font-size: 10px; }
-.cat-grid { display: grid; grid-template-columns: 1fr; gap: 3px; }
-.cat-checkbox { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 4px; font-size: 12px; }
-.cat-checkbox:hover { background: #1e2035; }
-.cat-checkbox input[type="checkbox"] { width: 13px; height: 13px; margin: 0; flex-shrink: 0; }
-.cat-checkbox label { display: flex; align-items: center; gap: 6px; flex: 1; cursor: pointer; color: #ddd; min-width: 0; }
-.cat-checkbox label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cat-checkbox .cat-rename { flex: 1; min-width: 0; padding: 3px 6px; border-radius: 4px; border: 1px solid #2a2d45; background: #0f1120; color: #aaa; font-size: 11px; box-sizing: border-box; }
-.cat-checkbox .cat-rename:focus { border-color: #007bff; outline: none; color: #fff; }
-.cat-checkbox .cat-rename::placeholder { color: #555; font-style: italic; }
-.cat-section { margin: 8px 0; }
-.cat-section-header { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: #1e2035; border-radius: 6px; cursor: pointer; user-select: none; transition: background 0.15s; }
-.cat-section-header:hover { background: #252740; }
-.cat-section-header strong { color: #007bff; font-size: 13px; flex: 1; }
-.cat-section-header .hint { color: #666; font-size: 10px; }
-.cat-section-header .chevron { color: #007bff; font-size: 11px; transition: transform 0.2s; display: inline-block; }
-.cat-section-header .chevron.open { transform: rotate(180deg); }
-.cat-section-body { padding: 6px 0 6px 4px; display: none; }
-.cat-master { width: 13px; height: 13px; margin: 0; }
-.loading-spinner { text-align: center; color: #aaa; font-size: 12px; padding: 20px; }
+            .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); overflow-y: auto; }
+            .modal-content { background: #1b1d30; margin: 40px auto; padding: 25px; border-radius: 12px; max-width: 500px; position: relative; }
+            .close-modal { position: absolute; top: 10px; right: 20px; color: #aaa; font-size: 28px; font-weight: bold; cursor: pointer; }
+            .close-modal:hover { color: white; }
+            .cat-group { margin: 15px 0; }
+            .cat-group h4 { color: #007bff; margin: 10px 0 5px; }
+            .cat-checkbox { margin: 3px 0; display: flex; align-items: center; }
+            .cat-checkbox input { width: auto; margin-right: 8px; }
+            .loading-spinner { text-align: center; color: #aaa; }
         </style></head>
         <body>
             <div class="container">
                 <h2 style="text-align:center">𝕏𝕋𝔸𝕃𝕂𝔼ℝ 𝕀𝕀</h2>
                 <div id="lists-container"></div>
-                <button class="add-btn" onclick="saveCategories()" style="margin-top:14px; padding:8px; font-size:13px;">Confirmar</button>
+                <button class="add-btn" onclick="addList()">+ Adicionar Nova Lista (Máx 5)</button>
                 <button class="categories-btn" onclick="openCategoryModal()">📋 Escolhe aqui as categorias</button>
                 <button class="install-btn" onclick="install()">🚀 INSTALAR NO STREMIO</button>
             </div>
@@ -100,8 +81,7 @@ app.get("/configure", (req, res) => {
             <div id="categoryModal" class="modal">
                 <div class="modal-content">
                     <span class="close-modal" onclick="closeCategoryModal()">&times;</span>
-                    <h3 style="margin:0 0 10px; font-size:15px; color:#007bff;">Categorias</h3>
-<p style="color:#666; font-size:11px; margin:0 0 8px;">Deixa em branco para manter o nome original. Escreve para personalizar.</p>
+                    <h3>Escolhe as categorias a instalar</h3>
                     <div id="categoryCheckboxes"></div>
                     <button class="add-btn" onclick="saveCategories()" style="margin-top:20px;">✅ Confirmar seleção</button>
                 </div>
@@ -260,47 +240,17 @@ app.get("/configure", (req, res) => {
                             const saved = selectedCategories[i] || { tv: [], movie: [], series: [] };
 
                             ['tv', 'movie', 'series'].forEach(type => {
-    const typeLabel = type === 'tv' ? 'TV' : (type === 'movie' ? 'Filmes' : 'Séries');
-    const groupId = \`\${i}_\${type}\`;
-    const isFirstConfig = !selectedCategories[i];
-    const savedItems = (selectedCategories[i] && selectedCategories[i][type]) ? selectedCategories[i][type] : [];
-    const total = cats[type] ? cats[type].length : 0;
-
-    html += \`<div class="cat-section">
-        <div class="cat-section-header" onclick="toggleSection('\${groupId}')">
-            <input type="checkbox" class="cat-master" data-group="\${groupId}" \${isFirstConfig ? 'checked' : ''} onclick="event.stopPropagation();" onchange="toggleAllCats('\${groupId}', this.checked)">
-            <strong>\${typeLabel}</strong>
-            <span class="hint">\${total} categorias</span>
-            <span class="chevron" id="chev-\${groupId}">▼</span>
-        </div>
-        <div class="cat-section-body" id="body-\${groupId}">\`;
-
-    if (total > 0) {
-        cats[type].forEach(cat => {
-            let isChecked = isFirstConfig;
-            let customName = '';
-            for (const item of savedItems) {
-                if (typeof item === 'string' && item === cat) { isChecked = true; break; }
-                if (item && item.original === cat) {
-                    isChecked = true;
-                    if (item.custom && item.custom !== cat) customName = item.custom;
-                    break;
-                }
-            }
-            html += \`<div class="cat-checkbox">
-                <label>
-                    <input type="checkbox" class="cat-check" data-list="\${i}" data-type="\${type}" data-group="\${groupId}" value="\${cat}" \${isChecked ? 'checked' : ''} onchange="updateMasterCheckbox('\${groupId}')">
-                    <span title="\${cat}">\${cat}</span>
-                </label>
-                <input type="text" class="cat-rename" data-list="\${i}" data-type="\${type}" data-original="\${cat}" placeholder="novo nome" value="\${customName}">
-            </div>\`;
-        });
-    } else {
-        html += '<p style="color: #555; font-size:11px; margin:2px 0;">Sem categorias</p>';
-    }
-
-    html += '</div></div>';
-});
+                                const typeLabel = type === 'tv' ? 'TV' : (type === 'movie' ? 'Filmes' : 'Séries');
+                                html += \`<p style="color:#aaa; margin:8px 0 2px;">\${typeLabel}:</p>\`;
+                                if (cats[type] && cats[type].length > 0) {
+                                    cats[type].forEach(cat => {
+                                        const checked = saved[type].includes(cat) ? 'checked' : '';
+                                        html += \`<div class="cat-checkbox"><label><input type="checkbox" class="cat-check" data-list="\${i}" data-type="\${type}" value="\${cat}" \${checked}> \${cat}</label></div>\`;
+                                    });
+                                } else {
+                                    html += '<p style="color: #666; font-size:12px;">Nenhuma categoria disponível</p>';
+                                }
+                            });
                         } catch (e) {
                             html += '<p style="color: red;">Erro ao obter categorias</p>';
                         }
@@ -313,53 +263,20 @@ app.get("/configure", (req, res) => {
                     document.getElementById('categoryModal').style.display = 'none';
                 }
 
-               function toggleAllCats(groupId, checked) {
-    document.querySelectorAll(\`.cat-check[data-group="\${groupId}"]\`).forEach(cb => {
-        cb.checked = checked;
-    });
-}
-
-function updateMasterCheckbox(groupId) {
-    const all = document.querySelectorAll(\`.cat-check[data-group="\${groupId}"]\`);
-    const checked = document.querySelectorAll(\`.cat-check[data-group="\${groupId}"]:checked\`);
-    const master = document.querySelector(\`.cat-master[data-group="\${groupId}"]\`);
-    if (master) {
-        master.checked = all.length > 0 && all.length === checked.length;
-        master.indeterminate = checked.length > 0 && checked.length < all.length;
-    }
-}
-
-function toggleSection(groupId) {
-    const body = document.getElementById('body-' + groupId);
-    const chev = document.getElementById('chev-' + groupId);
-    if (!body) return;
-    if (body.style.display === 'block') {
-        body.style.display = 'none';
-        if (chev) chev.classList.remove('open');
-    } else {
-        body.style.display = 'block';
-        if (chev) chev.classList.add('open');
-    }
-}
-
                 function saveCategories() {
-    const newSelection = {};
-    document.querySelectorAll('.cat-checkbox').forEach(div => {
-        const cb = div.querySelector('.cat-check');
-        if (!cb || !cb.checked) return;
-        const renameInput = div.querySelector('.cat-rename');
-        const listIdx = parseInt(cb.dataset.list);
-        const type = cb.dataset.type;
-        const original = cb.value;
-        const custom = renameInput && renameInput.value.trim() ? renameInput.value.trim() : original;
-        if (!newSelection[listIdx]) newSelection[listIdx] = { tv: [], movie: [], series: [] };
-        newSelection[listIdx][type].push({ original, custom });
-    });
-    selectedCategories = newSelection;
-    console.log('[SAVE] selectedCategories:', JSON.stringify(selectedCategories));
-    closeCategoryModal();
-    alert('Categorias selecionadas guardadas!');
-}
+                    const checks = document.querySelectorAll('.cat-check:checked');
+                    const newSelection = {};
+                    checks.forEach(cb => {
+                        const listIdx = parseInt(cb.dataset.list);
+                        const type = cb.dataset.type;
+                        const value = cb.value;
+                        if (!newSelection[listIdx]) newSelection[listIdx] = { tv: [], movie: [], series: [] };
+                        newSelection[listIdx][type].push(value);
+                    });
+                    selectedCategories = newSelection;
+                    closeCategoryModal();
+                    alert('Categorias selecionadas guardadas!');
+                }
 
                 function getListDataFromBox(box) {
                     const type = box.querySelector('.type').value;
@@ -661,9 +578,6 @@ if (!global.linkAttempts) global.linkAttempts = {};
 if (!global.linkAttempts[streamKey]) global.linkAttempts[streamKey] = 0;
 const MAX_LINK_ATTEMPTS = 2;
 
-let reconnectAttempts = 0;
-const MAX_RECONNECT = 5;
-      
 // Guarda o último URL que funcionou (para reconexão rápida sem falar com o portal)
 if (!global.lastGoodUrl) global.lastGoodUrl = {};
 
@@ -672,7 +586,6 @@ function connectToExistingBroadcaster(cached, res, streamKey, req) {
     if (cached.source && !cached.source.destroyed && cached.broadcaster) {
         console.log(`[PROXY TV] Reconexão rápida detetada. A ligar ao Broadcaster existente...`);
         if (cached.timeout) { clearTimeout(cached.timeout); cached.timeout = null; }
-        reconnectAttempts = 0; // reset ao reconectar cliente
         res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Connection': 'keep-alive', 'Access-Control-Allow-Origin': '*' });
         cached.broadcaster.pipe(res);
         cached.clients.add(res);
@@ -720,7 +633,8 @@ const isDirectLink = (possibleUrl.startsWith('http://') || possibleUrl.startsWit
 
 const proxyUrl = configData.proxy ? configData.proxy.trim() : null;
 
-
+let reconnectAttempts = 0;
+const MAX_RECONNECT = 5;
 const sendError = (msg) => {
     if (!res.headersSent) {
         console.error(`[PROXY TV] ${msg}`);
@@ -776,6 +690,7 @@ async function getSource(urlToPlay) {
     };
 
     if (stalkerCmd.trim().toLowerCase().startsWith('ffmpeg')) {
+        // Usa FFmpeg com reconexão automática
         const ffmpegHeaders = Object.entries({
             ...rawHeaders,
             'Cookie': cookieString,
@@ -785,7 +700,7 @@ async function getSource(urlToPlay) {
             'Connection': 'keep-alive'
         }).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
 
-        const ffmpeg = spawn('ffmpeg', [
+        const source = spawn('ffmpeg', [
             '-headers', ffmpegHeaders,
             '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
             '-fflags', 'nobuffer+discardcorrupt+genpts',
@@ -795,12 +710,11 @@ async function getSource(urlToPlay) {
             '-f', 'mpegts',
             '-loglevel', 'error',
             'pipe:1'
-        ]);
-        const source = ffmpeg.stdout;
-        source.killProcess = () => { if (!ffmpeg.killed) ffmpeg.kill('SIGKILL'); };
-        ffmpeg.on('error', () => { if (!source.destroyed) source.destroy(); });
+        ]).stdout;
+        source.killProcess = () => { if (!source.killed) source.kill('SIGKILL'); };
         return source;
     } else {
+        // Usa Axios direto
         const axiosOpts = addon.getAxiosOpts(configData, {
             url: urlToPlay,
             headers: streamHeaders,
@@ -808,9 +722,7 @@ async function getSource(urlToPlay) {
             timeout: 8000
         });
         const streamRes = await axios(axiosOpts);
-        const source = streamRes.data;
-        source.killProcess = () => { if (!source.destroyed) source.destroy(); };
-        return source;
+        return streamRes.data;
     }
 }
 
@@ -909,25 +821,24 @@ const execStream = async (urlToPlay, isRetry = false) => {
         });
 
         req.on('close', () => {
-    const cached = global.activeTvStreams[streamKey];
-    if (cached) {
-        if (cached.renewTimer) clearInterval(cached.renewTimer);
-        cached.clients.delete(res);
-        cached.broadcaster.unpipe(res);
-        if (cached.clients.size === 0) {
-            if (cached.timeout) clearTimeout(cached.timeout);
-            cached.timeout = setTimeout(() => {
-                if (cached.clients && cached.clients.size === 0) {
-                    console.log(`[PROXY TV] Sem clientes há 30s, a libertar sessão.`);
-                    if (cached.source && cached.source.killProcess) cached.source.killProcess();
-                    else if (cached.source && cached.source.destroy) cached.source.destroy();
-                    cached.broadcaster.destroy();
-                    delete global.activeTvStreams[streamKey];
+            const cached = global.activeTvStreams[streamKey];
+            if (cached) {
+                if (cached.renewTimer) clearInterval(cached.renewTimer);
+                cached.clients.delete(res);
+                cached.broadcaster.unpipe(res);
+                if (cached.clients.size === 0) {
+                    if (cached.timeout) clearTimeout(cached.timeout);
+                    cached.timeout = setTimeout(() => {
+                        if (cached.clients && cached.clients.size === 0) {
+                            if (cached.source && cached.source.killProcess) cached.source.killProcess();
+                            else if (cached.source && cached.source.destroy) cached.source.destroy();
+                            cached.broadcaster.destroy();
+                            delete global.activeTvStreams[streamKey];
+                        }
+                    }, 10 * 60 * 1000);
                 }
-            }, 30 * 1000);
-        }
-    }
-});
+            }
+        });
 
     } catch (e) {
         console.error(`[PROXY TV] Erro ao obter stream: ${e.message}`);
@@ -957,68 +868,37 @@ const execStream = async (urlToPlay, isRetry = false) => {
 };
 
 async function attemptReconnect() {
-    const cached = global.activeTvStreams[streamKey];
-    if (!cached || !cached.broadcaster || cached.broadcaster.destroyed) {
-        console.log(`[PROXY TV] Sessão já não existe, a abortar reconexão.`);
+    if (reconnectAttempts >= MAX_RECONNECT) {
+        if (global.activeTvStreams[streamKey]) {
+            global.activeTvStreams[streamKey].broadcaster.end();
+            delete global.activeTvStreams[streamKey];
+        }
+        sendError('Falha na reconexão automática');
         return;
     }
-
     reconnectAttempts++;
-    if (reconnectAttempts > MAX_RECONNECT) {
-        console.log(`[PROXY TV] Máximo de tentativas de reconexão atingido. A fechar.`);
-        try { cached.broadcaster.end(); } catch(e){}
-        if (cached.source) {
-            if (cached.source.killProcess) cached.source.killProcess();
-            else if (cached.source.destroy) cached.source.destroy();
-        }
-        delete global.activeTvStreams[streamKey];
-        return;
-    }
-
     console.log(`[PROXY TV] Tentativa de reconexão ${reconnectAttempts}/${MAX_RECONNECT}...`);
-
     try {
-        // 1. Obter novo URL (renova token se necessário)
-        let newUrl = global.lastGoodUrl[streamKey] || possibleUrl;
-        if (!isDirectLink) {
-            const newAuth = await engine.authenticate(configData, configData.proxy);
-            if (!newAuth) throw new Error('Falha na autenticação');
-            auth = newAuth;
-            const linkUrl = `${newAuth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${newAuth.authData.sn}&token=${newAuth.token}&long_lived=1&JsHttpRequest=1-0`;
-            const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: newAuth.authData.headers }));
-            let streamUrl = linkRes.data?.js?.cmd || linkRes.data?.js || linkRes.data?.cmd;
-            if (!streamUrl) throw new Error('Link não obtido');
-            newUrl = streamUrl.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "").trim();
-            if (!newUrl.startsWith('http')) {
-                const basePortal = configData.url.split('/c/')[0];
-                newUrl = basePortal + (newUrl.startsWith('/') ? '' : '/') + newUrl;
-            }
+        if (isDirectLink) {
+            const lastUrl = global.lastGoodUrl[streamKey] || possibleUrl;
+            return execStream(lastUrl, true);
         }
-
-        // 2. Criar nova fonte
-        const newSource = await getSource(newUrl);
-        if (!newSource) throw new Error('Fonte indisponível');
-
-        // 3. Matar a fonte antiga (se ainda existir)
-        if (cached.source) {
-            if (cached.source.killProcess) cached.source.killProcess();
-            else if (cached.source.destroy) cached.source.destroy();
+        const newAuth = await engine.authenticate(configData, configData.proxy);
+        if (!newAuth) throw new Error('Falha na autenticação');
+        auth = newAuth;
+        const linkUrl = `${newAuth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${newAuth.authData.sn}&token=${newAuth.token}&long_lived=1&JsHttpRequest=1-0`;
+        const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: newAuth.authData.headers }));
+        let newStreamUrl = linkRes.data?.js?.cmd || linkRes.data?.js || linkRes.data?.cmd;
+        if (!newStreamUrl) throw new Error('Link não obtido');
+        let cUrl = newStreamUrl.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "").trim();
+        if (!cUrl.startsWith('http')) {
+            const basePortal = configData.url.split('/c/')[0];
+            cUrl = basePortal + (cUrl.startsWith('/') ? '' : '/') + cUrl;
         }
-
-        // 4. Ligar a nova fonte ao MESMO broadcaster (os clientes não notam)
-        newSource.pipe(cached.broadcaster, { end: false });
-        cached.source = newSource;
-        global.lastGoodUrl[streamKey] = newUrl;
-
-        // 5. Repor contador e voltar a ouvir falhas
-        reconnectAttempts = 0;
-        newSource.on('end', () => attemptReconnect());
-        newSource.on('error', () => attemptReconnect());
-
-        console.log(`[PROXY TV] Reconectado com sucesso.`);
+        await execStream(cUrl, true);
     } catch (err) {
         console.log(`[PROXY TV] Reconexão falhou: ${err.message}`);
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise(resolve => setTimeout(resolve, 2000));
         await attemptReconnect();
     }
 }
