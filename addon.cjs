@@ -405,65 +405,91 @@ if (effectiveGenre && config.selectedCategories) {
                     name: item.name || item.title, type: type, poster: item.stream_icon || item.cover, posterShape: type === "tv" ? "landscape" : "poster"
                 }));
             } else {
-                const page = Math.floor(skip / 14) + 1;
-                const cacheKey = `stalker_${config.url}_${type}_${extra.genre || 'N/A'}_p${page}`;
-                let stalkerData;
-                if (catalogCache[cacheKey] && (Date.now() - catalogCache[cacheKey].lastUpdate < CACHE_TTL)) {
-                    stalkerData = catalogCache[cacheKey].data;
-                } else {
-                    console.log(`[CACHE VAZIA/EXPIRADA] Autenticando e buscando dados do portal Stalker para ${type} - Página ${page}...`);
-                    const auth = await this.authenticate(config);
-                    if (auth) {
-                        const safeApi = auth.api;
-                        const altApi = auth.apiAlt || null;
-                        const sType = type === "tv" ? "itv" : (type === "movie" ? "vod" : "series");
-                        let catP = "";
-                        if (effectiveGenre) {
-                            const actions = sType === "itv" ? ["get_genres", "get_categories"] : ["get_categories", "get_genres"];
-                            let cats = [];
-                            for (const act of actions) {
-                                try {
-                                    let cRes;
-                                    try {
-                                        cRes = await axios.get(`${safeApi}type=${sType}&action=${act}&JsHttpRequest=1-0`, this.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 5000 }));
-                                    } catch (e) {
-                                        if (altApi) cRes = await axios.get(`${altApi}type=${sType}&action=${act}&JsHttpRequest=1-0`, this.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 5000 }));
-                                        else continue;
-                                    }
-                                    const found = cRes.data?.js?.data || cRes.data?.js || [];
-                                    const tempCats = Array.isArray(found) ? found : Object.values(found);
-                                    if (tempCats.length > 0) { cats = tempCats; break; }
-                                } catch(e) { continue; }
-                            }
-                            const cat = cats.find(c => normalize(c.title || c.name) === normalize(effectiveGenre));
-                            if (cat) catP = sType === "itv" ? `&genre=${cat.id}` : `&category=${cat.id}`;
-                        }
-                        let sAct = "get_ordered_list"; 
-                        let chCheckCat = type === "tv" ? "&force_ch_link_check=1" : "";
-                        let res;
-                        try {
-                            res = await axios.get(`${safeApi}type=${sType}&action=${sAct}${catP}&p=${page}${chCheckCat}&JsHttpRequest=1-0`, this.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 10000 }));
-                        } catch (e) {
-                            if (altApi) {
-                                console.log(`[CATALOG] Portal.php falhou, a tentar server/load.php...`);
-                                res = await axios.get(`${altApi}type=${sType}&action=${sAct}${catP}&p=${page}${chCheckCat}&JsHttpRequest=1-0`, this.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 10000 }));
-                            } else throw e;
-                        }
+    // ===== STALKER =====
+    const auth = await this.authenticate(config);
+    if (!auth) return { metas: [] };
+
+    const safeApi = auth.api;
+    const altApi = auth.apiAlt || null;
+    const sType = type === "tv" ? "itv" : (type === "movie" ? "vod" : "series");
+
+    // Descobrir TODOS os IDs que correspondem ao género pedido
+    let matchedIds = [];
+    if (effectiveGenre) {
+        const actions = sType === "itv" ? ["get_genres", "get_categories"] : ["get_categories", "get_genres"];
+        let cats = [];
+        for (const act of actions) {
+            try {
+                let cRes;
+                try {
+                    cRes = await axios.get(`${safeApi}type=${sType}&action=${act}&JsHttpRequest=1-0`, this.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 5000 }));
+                } catch (e) {
+                    if (altApi) cRes = await axios.get(`${altApi}type=${sType}&action=${act}&JsHttpRequest=1-0`, this.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 5000 }));
+                    else continue;
+                }
+                const found = cRes.data?.js?.data || cRes.data?.js || [];
+                const tempCats = Array.isArray(found) ? found : Object.values(found);
+                if (tempCats.length > 0) { cats = tempCats; break; }
+            } catch(e) { continue; }
+        }
+        matchedIds = cats
+            .filter(c => normalize(c.title || c.name) === normalize(effectiveGenre))
+            .map(c => String(c.id));
+        console.log(`[STALKER] Genre="${effectiveGenre}" -> IDs encontrados: ${JSON.stringify(matchedIds)}`);
+    }
+
+    const sAct = "get_ordered_list";
+    const chCheckCat = type === "tv" ? "&force_ch_link_check=1" : "";
+    const paramStrategies = sType === "itv" ? ["genre", "category"] : ["category", "genre"];
+
+    const stalkerCacheKey = `stalker_all_${config.url}_${sType}_${effectiveGenre || 'all'}`;
+    let stalkerData;
+
+    if (catalogCache[stalkerCacheKey] && (Date.now() - catalogCache[stalkerCacheKey].lastUpdate < CACHE_TTL)) {
+        stalkerData = catalogCache[stalkerCacheKey].data;
+        console.log(`[STALKER] Cache hit: ${stalkerData.length} itens`);
+    } else {
+        // Tentar combinações até encontrar itens
+        outerLoop:
+        for (const id of (matchedIds.length ? matchedIds : [null])) {
+            for (const param of (id ? paramStrategies : [null])) {
+                for (const startPage of [1, 0]) {
+                    const catP = id ? `&${param}=${id}` : "";
+                    try {
+                        const res = await axios.get(
+                            `${safeApi}type=${sType}&action=${sAct}${catP}&p=${startPage}${chCheckCat}&JsHttpRequest=1-0`,
+                            this.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 10000 })
+                        );
                         const raw = res.data?.js?.data || res.data?.js || [];
-                        stalkerData = Array.isArray(raw) ? raw : Object.values(raw);
-                        catalogCache[cacheKey] = { data: stalkerData, lastUpdate: Date.now() };
-                    } else {
-                        stalkerData = [];
+                        const items = Array.isArray(raw) ? raw : Object.values(raw);
+                        const valid = items.filter(i => i && (i.id || i.cmd));
+                        console.log(`[STALKER] id=${id} param=${param} p=${startPage} -> ${valid.length} itens`);
+                        if (valid.length > 0) {
+                            stalkerData = valid;
+                            break outerLoop;
+                        }
+                    } catch(e) {
+                        console.warn(`[STALKER] Erro id=${id} param=${param} p=${startPage}: ${e.message}`);
                     }
                 }
-                metas = stalkerData.filter(i => i && (i.id || i.cmd)).map(m => {
-                    let targetId = (type === "series") ? (m.id || m.cmd) : (m.cmd || m.id);
-                    return {
-                        id: `xlv:${lIdx}_${listSig}:${encodeURIComponent(targetId)}:${encodeURIComponent(m.name || m.title)}:${encodeURIComponent(m.logo || m.screenshot_uri || '')}`,
-                        name: m.name || m.title, type: type, poster: m.logo || m.screenshot_uri, posterShape: type === "tv" ? "landscape" : "poster"
-                    };
-                });
             }
+        }
+
+        if (!stalkerData) stalkerData = [];
+        catalogCache[stalkerCacheKey] = { data: stalkerData, lastUpdate: Date.now() };
+    }
+
+    metas = stalkerData.slice(skip, skip + 100).map(m => {
+        let targetId = m.id || m.cmd;
+        return {
+            id: `xlv:${lIdx}_${listSig}:${encodeURIComponent(targetId)}:${encodeURIComponent(m.name || m.title)}:${encodeURIComponent(m.logo || m.screenshot_uri || '')}`,
+            name: m.name || m.title,
+            type: type,
+            poster: m.logo || m.screenshot_uri,
+            posterShape: type === "tv" ? "landscape" : "poster"
+        };
+    });
+}
         } catch (e) { 
             console.error(`[CATALOG ERROR] Erro ao carregar catálogo:`, e.message); 
             if (e.response && e.response.status === 400) console.error(`[DEBUG 400] O portal rejeitou este URL exato:`, e.config?.url || e.response?.config?.url);
