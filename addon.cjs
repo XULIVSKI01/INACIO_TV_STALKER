@@ -449,35 +449,59 @@ if (effectiveGenre && config.selectedCategories) {
         stalkerData = catalogCache[stalkerCacheKey].data;
         console.log(`[STALKER] Cache hit: ${stalkerData.length} itens`);
     } else {
-        // Tentar combinações até encontrar itens
-        outerLoop:
-        for (const id of (matchedIds.length ? matchedIds : [null])) {
-            for (const param of (id ? paramStrategies : [null])) {
-                for (const startPage of [1, 0]) {
-                    const catP = id ? `&${param}=${id}` : "";
-                    try {
-                        const res = await axios.get(
-                            `${safeApi}type=${sType}&action=${sAct}${catP}&p=${startPage}${chCheckCat}&JsHttpRequest=1-0`,
-                            this.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 10000 })
-                        );
-                        const raw = res.data?.js?.data || res.data?.js || [];
-                        const items = Array.isArray(raw) ? raw : Object.values(raw);
-                        const valid = items.filter(i => i && (i.id || i.cmd));
-                        console.log(`[STALKER] id=${id} param=${param} p=${startPage} -> ${valid.length} itens`);
-                        if (valid.length > 0) {
-                            stalkerData = valid;
-                            break outerLoop;
-                        }
-                    } catch(e) {
-                        console.warn(`[STALKER] Erro id=${id} param=${param} p=${startPage}: ${e.message}`);
+    // 1. Descobrir a combinação que funciona (só a primeira página)
+    let workingCatP = null;
+    outerLoop:
+    for (const id of (matchedIds.length ? matchedIds : [null])) {
+        for (const param of (id ? paramStrategies : [null])) {
+            for (const startPage of [1, 0]) {
+                const catP = id ? `&${param}=${id}` : "";
+                try {
+                    const res = await axios.get(
+                        `${safeApi}type=${sType}&action=${sAct}${catP}&p=${startPage}${chCheckCat}&JsHttpRequest=1-0`,
+                        this.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 10000 })
+                    );
+                    const raw = res.data?.js?.data || res.data?.js || [];
+                    const items = Array.isArray(raw) ? raw : Object.values(raw);
+                    const valid = items.filter(i => i && (i.id || i.cmd));
+                    console.log(`[STALKER] id=${id} param=${param} p=${startPage} -> ${valid.length} itens`);
+                    if (valid.length > 0) {
+                        workingCatP = { catP, startPage };
+                        break outerLoop;
                     }
+                } catch(e) {
+                    console.warn(`[STALKER] Erro id=${id} param=${param} p=${startPage}: ${e.message}`);
                 }
             }
         }
-
-        if (!stalkerData) stalkerData = [];
-        catalogCache[stalkerCacheKey] = { data: stalkerData, lastUpdate: Date.now() };
     }
+
+    // 2. Acumular páginas sucessivas
+    stalkerData = [];
+    if (workingCatP) {
+        const { catP, startPage } = workingCatP;
+        for (let p = startPage; p <= startPage + 19; p++) {
+            try {
+                const res = await axios.get(
+                    `${safeApi}type=${sType}&action=${sAct}${catP}&p=${p}${chCheckCat}&JsHttpRequest=1-0`,
+                    this.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 10000 })
+                );
+                const raw = res.data?.js?.data || res.data?.js || [];
+                const items = Array.isArray(raw) ? raw : Object.values(raw);
+                const valid = items.filter(i => i && (i.id || i.cmd));
+                console.log(`[STALKER] Página ${p} -> ${valid.length} itens`);
+                if (valid.length === 0) break;
+                stalkerData = stalkerData.concat(valid);
+            } catch(e) {
+                console.warn(`[STALKER] Erro página ${p}: ${e.message}`);
+                break;
+            }
+        }
+    }
+
+    console.log(`[STALKER] Total acumulado: ${stalkerData.length} itens`);
+    catalogCache[stalkerCacheKey] = { data: stalkerData, lastUpdate: Date.now() };
+}
 
     metas = stalkerData.slice(skip, skip + 100).map(m => {
         let targetId = m.id || m.cmd;
