@@ -241,15 +241,15 @@ app.get("/configure", (req, res) => {
 
                             ['tv', 'movie', 'series'].forEach(type => {
     const typeLabel = type === 'tv' ? 'TV' : (type === 'movie' ? 'Filmes' : 'Séries');
-    const groupId = `${i}_${type}`;
-    const isFirstConfig = !selectedCategories[i]; // nunca configurado → marcar tudo
+    const groupId = \`\${i}_\${type}\`;
+    const isFirstConfig = !selectedCategories[i];
     const savedItems = (selectedCategories[i] && selectedCategories[i][type]) ? selectedCategories[i][type] : [];
 
-    html += `<p style="color:#aaa; margin:12px 0 4px; display:flex; align-items:center; gap:8px;">
-        <input type="checkbox" class="cat-master" data-group="${groupId}" ${isFirstConfig ? 'checked' : ''} onchange="toggleAllCats('${groupId}', this.checked)">
-        <strong style="color:#007bff; font-size:14px;">${typeLabel}</strong>
+    html += \`<p style="color:#aaa; margin:12px 0 4px; display:flex; align-items:center; gap:8px;">
+        <input type="checkbox" class="cat-master" data-group="\${groupId}" \${isFirstConfig ? 'checked' : ''} onchange="toggleAllCats('\${groupId}', this.checked)">
+        <strong style="color:#007bff; font-size:14px;">\${typeLabel}</strong>
         <span style="color:#666; font-size:11px;">(marcar/desmarcar todas)</span>
-    </p>`;
+    </p>\`;
 
     if (cats[type] && cats[type].length > 0) {
         cats[type].forEach(cat => {
@@ -263,13 +263,13 @@ app.get("/configure", (req, res) => {
                     break;
                 }
             }
-            html += `<div class="cat-checkbox">
+            html += \`<div class="cat-checkbox">
                 <label>
-                    <input type="checkbox" class="cat-check" data-list="${i}" data-type="${type}" data-group="${groupId}" value="${cat}" ${isChecked ? 'checked' : ''} onchange="updateMasterCheckbox('${groupId}')">
-                    <span style="color:#ddd;">${cat}</span>
+                    <input type="checkbox" class="cat-check" data-list="\${i}" data-type="\${type}" data-group="\${groupId}" value="\${cat}" \${isChecked ? 'checked' : ''} onchange="updateMasterCheckbox('\${groupId}')">
+                    <span style="color:#ddd;">\${cat}</span>
                 </label>
-                <input type="text" class="cat-rename" data-list="${i}" data-type="${type}" data-original="${cat}" placeholder="Nome a mostrar no Stremio (opcional)" value="${customName}">
-            </div>`;
+                <input type="text" class="cat-rename" data-list="\${i}" data-type="\${type}" data-original="\${cat}" placeholder="Nome a mostrar no Stremio (opcional)" value="\${customName}">
+            </div>\`;
         });
     } else {
         html += '<p style="color: #666; font-size:12px;">Nenhuma categoria disponível</p>';
@@ -288,20 +288,20 @@ app.get("/configure", (req, res) => {
                 }
 
                function toggleAllCats(groupId, checked) {
-    document.querySelectorAll(`.cat-check[data-group="${groupId}"]`).forEach(cb => {
+    document.querySelectorAll(\`.cat-check[data-group="\${groupId}"]\`).forEach(cb => {
         cb.checked = checked;
     });
 }
 
 function updateMasterCheckbox(groupId) {
-    const all = document.querySelectorAll(`.cat-check[data-group="${groupId}"]`);
-    const checked = document.querySelectorAll(`.cat-check[data-group="${groupId}"]:checked`);
-    const master = document.querySelector(`.cat-master[data-group="${groupId}"]`);
+    const all = document.querySelectorAll(\`.cat-check[data-group="\${groupId}"]\`);
+    const checked = document.querySelectorAll(\`.cat-check[data-group="\${groupId}"]:checked\`);
+    const master = document.querySelector(\`.cat-master[data-group="\${groupId}"]\`);
     if (master) {
         master.checked = all.length > 0 && all.length === checked.length;
         master.indeterminate = checked.length > 0 && checked.length < all.length;
     }
-} 
+}
 
                 function saveCategories() {
                     const checks = document.querySelectorAll('.cat-check:checked');
