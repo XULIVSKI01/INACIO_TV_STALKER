@@ -318,19 +318,23 @@ function updateMasterCheckbox(groupId) {
 }
 
                 function saveCategories() {
-                    const checks = document.querySelectorAll('.cat-check:checked');
-                    const newSelection = {};
-                    checks.forEach(cb => {
-                        const listIdx = parseInt(cb.dataset.list);
-                        const type = cb.dataset.type;
-                        const value = cb.value;
-                        if (!newSelection[listIdx]) newSelection[listIdx] = { tv: [], movie: [], series: [] };
-                        newSelection[listIdx][type].push(value);
-                    });
-                    selectedCategories = newSelection;
-                    closeCategoryModal();
-                    alert('Categorias selecionadas guardadas!');
-                }
+    const newSelection = {};
+    document.querySelectorAll('.cat-checkbox').forEach(div => {
+        const cb = div.querySelector('.cat-check');
+        if (!cb || !cb.checked) return;
+        const renameInput = div.querySelector('.cat-rename');
+        const listIdx = parseInt(cb.dataset.list);
+        const type = cb.dataset.type;
+        const original = cb.value;
+        const custom = renameInput && renameInput.value.trim() ? renameInput.value.trim() : original;
+        if (!newSelection[listIdx]) newSelection[listIdx] = { tv: [], movie: [], series: [] };
+        newSelection[listIdx][type].push({ original, custom });
+    });
+    selectedCategories = newSelection;
+    console.log('[SAVE] selectedCategories:', JSON.stringify(selectedCategories));
+    closeCategoryModal();
+    alert('Categorias selecionadas guardadas!');
+}
 
                 function getListDataFromBox(box) {
                     const type = box.querySelector('.type').value;
