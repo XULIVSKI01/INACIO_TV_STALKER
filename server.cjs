@@ -77,6 +77,14 @@ app.get("/configure", (req, res) => {
 .cat-checkbox .cat-rename { flex: 1; min-width: 0; padding: 3px 6px; border-radius: 4px; border: 1px solid #2a2d45; background: #0f1120; color: #aaa; font-size: 11px; box-sizing: border-box; }
 .cat-checkbox .cat-rename:focus { border-color: #007bff; outline: none; color: #fff; }
 .cat-checkbox .cat-rename::placeholder { color: #555; font-style: italic; }
+.cat-section { margin: 8px 0; }
+.cat-section-header { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: #1e2035; border-radius: 6px; cursor: pointer; user-select: none; transition: background 0.15s; }
+.cat-section-header:hover { background: #252740; }
+.cat-section-header strong { color: #007bff; font-size: 13px; flex: 1; }
+.cat-section-header .hint { color: #666; font-size: 10px; }
+.cat-section-header .chevron { color: #007bff; font-size: 11px; transition: transform 0.2s; display: inline-block; }
+.cat-section-header .chevron.open { transform: rotate(180deg); }
+.cat-section-body { padding: 6px 0 6px 4px; display: none; }
 .cat-master { width: 13px; height: 13px; margin: 0; }
 .loading-spinner { text-align: center; color: #aaa; font-size: 12px; padding: 20px; }
         </style></head>
@@ -256,15 +264,18 @@ app.get("/configure", (req, res) => {
     const groupId = \`\${i}_\${type}\`;
     const isFirstConfig = !selectedCategories[i];
     const savedItems = (selectedCategories[i] && selectedCategories[i][type]) ? selectedCategories[i][type] : [];
+    const total = cats[type] ? cats[type].length : 0;
 
-    html += \`<div class="cat-type-row">
-        <input type="checkbox" class="cat-master" data-group="\${groupId}" \${isFirstConfig ? 'checked' : ''} onchange="toggleAllCats('\${groupId}', this.checked)">
-        <strong>\${typeLabel}</strong>
-        <span class="hint">(todos)</span>
-    </div>\`;
+    html += \`<div class="cat-section">
+        <div class="cat-section-header" onclick="toggleSection('\${groupId}')">
+            <input type="checkbox" class="cat-master" data-group="\${groupId}" \${isFirstConfig ? 'checked' : ''} onclick="event.stopPropagation();" onchange="toggleAllCats('\${groupId}', this.checked)">
+            <strong>\${typeLabel}</strong>
+            <span class="hint">\${total} categorias</span>
+            <span class="chevron" id="chev-\${groupId}">▼</span>
+        </div>
+        <div class="cat-section-body" id="body-\${groupId}">\`;
 
-    if (cats[type] && cats[type].length > 0) {
-        html += '<div class="cat-grid">';
+    if (total > 0) {
         cats[type].forEach(cat => {
             let isChecked = isFirstConfig;
             let customName = '';
@@ -284,10 +295,11 @@ app.get("/configure", (req, res) => {
                 <input type="text" class="cat-rename" data-list="\${i}" data-type="\${type}" data-original="\${cat}" placeholder="novo nome" value="\${customName}">
             </div>\`;
         });
-        html += '</div>';
     } else {
         html += '<p style="color: #555; font-size:11px; margin:2px 0;">Sem categorias</p>';
     }
+
+    html += '</div></div>';
 });
                         } catch (e) {
                             html += '<p style="color: red;">Erro ao obter categorias</p>';
@@ -314,6 +326,19 @@ function updateMasterCheckbox(groupId) {
     if (master) {
         master.checked = all.length > 0 && all.length === checked.length;
         master.indeterminate = checked.length > 0 && checked.length < all.length;
+    }
+}
+
+function toggleSection(groupId) {
+    const body = document.getElementById('body-' + groupId);
+    const chev = document.getElementById('chev-' + groupId);
+    if (!body) return;
+    if (body.style.display === 'block') {
+        body.style.display = 'none';
+        if (chev) chev.classList.remove('open');
+    } else {
+        body.style.display = 'block';
+        if (chev) chev.classList.add('open');
     }
 }
 
