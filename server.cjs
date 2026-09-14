@@ -240,17 +240,41 @@ app.get("/configure", (req, res) => {
                             const saved = selectedCategories[i] || { tv: [], movie: [], series: [] };
 
                             ['tv', 'movie', 'series'].forEach(type => {
-                                const typeLabel = type === 'tv' ? 'TV' : (type === 'movie' ? 'Filmes' : 'Séries');
-                                html += \`<p style="color:#aaa; margin:8px 0 2px;">\${typeLabel}:</p>\`;
-                                if (cats[type] && cats[type].length > 0) {
-                                    cats[type].forEach(cat => {
-                                        const checked = saved[type].includes(cat) ? 'checked' : '';
-                                        html += \`<div class="cat-checkbox"><label><input type="checkbox" class="cat-check" data-list="\${i}" data-type="\${type}" value="\${cat}" \${checked}> \${cat}</label></div>\`;
-                                    });
-                                } else {
-                                    html += '<p style="color: #666; font-size:12px;">Nenhuma categoria disponível</p>';
-                                }
-                            });
+    const typeLabel = type === 'tv' ? 'TV' : (type === 'movie' ? 'Filmes' : 'Séries');
+    const groupId = `${i}_${type}`;
+    const isFirstConfig = !selectedCategories[i]; // nunca configurado → marcar tudo
+    const savedItems = (selectedCategories[i] && selectedCategories[i][type]) ? selectedCategories[i][type] : [];
+
+    html += `<p style="color:#aaa; margin:12px 0 4px; display:flex; align-items:center; gap:8px;">
+        <input type="checkbox" class="cat-master" data-group="${groupId}" ${isFirstConfig ? 'checked' : ''} onchange="toggleAllCats('${groupId}', this.checked)">
+        <strong style="color:#007bff; font-size:14px;">${typeLabel}</strong>
+        <span style="color:#666; font-size:11px;">(marcar/desmarcar todas)</span>
+    </p>`;
+
+    if (cats[type] && cats[type].length > 0) {
+        cats[type].forEach(cat => {
+            let isChecked = isFirstConfig;
+            let customName = '';
+            for (const item of savedItems) {
+                if (typeof item === 'string' && item === cat) { isChecked = true; break; }
+                if (item && item.original === cat) {
+                    isChecked = true;
+                    if (item.custom && item.custom !== cat) customName = item.custom;
+                    break;
+                }
+            }
+            html += `<div class="cat-checkbox">
+                <label>
+                    <input type="checkbox" class="cat-check" data-list="${i}" data-type="${type}" data-group="${groupId}" value="${cat}" ${isChecked ? 'checked' : ''} onchange="updateMasterCheckbox('${groupId}')">
+                    <span style="color:#ddd;">${cat}</span>
+                </label>
+                <input type="text" class="cat-rename" data-list="${i}" data-type="${type}" data-original="${cat}" placeholder="Nome a mostrar no Stremio (opcional)" value="${customName}">
+            </div>`;
+        });
+    } else {
+        html += '<p style="color: #666; font-size:12px;">Nenhuma categoria disponível</p>';
+    }
+});
                         } catch (e) {
                             html += '<p style="color: red;">Erro ao obter categorias</p>';
                         }
@@ -262,6 +286,22 @@ app.get("/configure", (req, res) => {
                 function closeCategoryModal() {
                     document.getElementById('categoryModal').style.display = 'none';
                 }
+
+               function toggleAllCats(groupId, checked) {
+    document.querySelectorAll(`.cat-check[data-group="${groupId}"]`).forEach(cb => {
+        cb.checked = checked;
+    });
+}
+
+function updateMasterCheckbox(groupId) {
+    const all = document.querySelectorAll(`.cat-check[data-group="${groupId}"]`);
+    const checked = document.querySelectorAll(`.cat-check[data-group="${groupId}"]:checked`);
+    const master = document.querySelector(`.cat-master[data-group="${groupId}"]`);
+    if (master) {
+        master.checked = all.length > 0 && all.length === checked.length;
+        master.indeterminate = checked.length > 0 && checked.length < all.length;
+    }
+} 
 
                 function saveCategories() {
                     const checks = document.querySelectorAll('.cat-check:checked');
