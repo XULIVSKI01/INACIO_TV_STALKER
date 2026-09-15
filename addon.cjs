@@ -295,28 +295,14 @@ const addon = {
         
         // 📌 Filtragem pelas categorias selecionadas (NOVA LÓGICA)
         if (l.selectedCategories) {
-    const sel = l.selectedCategories;
-    const applySelections = (list, originalCats) => {
-        if (!list || list.length === 0) return [];
-        const origSelected = new Set();
-        const origToCustom = {};
-        list.forEach(item => {
-            if (typeof item === 'string') {
-                origSelected.add(item);
-                origToCustom[item] = item;
-            } else if (item && item.original) {
-                origSelected.add(item.original);
-                origToCustom[item.original] = (item.custom && item.custom.trim()) ? item.custom.trim() : item.original;
-            }
-        });
-        return originalCats
-            .filter(cat => origSelected.has(cat))
-            .map(cat => origToCustom[cat] || cat);
-    };
-    tvG = applySelections(sel.tv, tvG);
-    movG = applySelections(sel.movie, movG);
-    serG = applySelections(sel.series, serG);
-}
+            const sel = l.selectedCategories;
+            if (sel.tv && sel.tv.length > 0) tvG = tvG.filter(cat => sel.tv.includes(cat));
+            else tvG = [];
+            if (sel.movie && sel.movie.length > 0) movG = movG.filter(cat => sel.movie.includes(cat));
+            else movG = [];
+            if (sel.series && sel.series.length > 0) serG = serG.filter(cat => sel.series.includes(cat));
+            else serG = [];
+        }
 
         // Remove duplicados e valores nulos
         const uniqueTv = [...new Set(tvG.filter(Boolean))];
@@ -350,20 +336,7 @@ const addon = {
 
         const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
         const skip = parseInt(extra.skip) || 0;
-        let effectiveGenre = (extra.genre === 'Predefinido' || extra.genre === 'Default') ? null : extra.genre;
-if (effectiveGenre && config.selectedCategories) {
-    const listType = type === 'tv' ? 'tv' : (type === 'movie' ? 'movie' : 'series');
-    const items = config.selectedCategories[listType] || [];
-    for (const item of items) {
-        if (item && typeof item === 'object' && item.original) {
-            const custom = (item.custom && item.custom.trim()) ? item.custom.trim() : item.original;
-            if (custom === effectiveGenre) {
-                effectiveGenre = item.original;
-                break;
-            }
-        }
-    }
-}
+        const effectiveGenre = (extra.genre === 'Predefinido' || extra.genre === 'Default') ? null : extra.genre;
         let metas = [];
         try {
             if (config.type === 'm3u') {
