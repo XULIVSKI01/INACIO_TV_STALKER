@@ -65,8 +65,22 @@ app.get("/configure", (req, res) => {
             .close-modal:hover { color: white; }
             .cat-group { margin: 15px 0; }
             .cat-group h4 { color: #007bff; margin: 10px 0 5px; }
-            .cat-checkbox { margin: 3px 0; display: flex; align-items: center; }
-            .cat-checkbox input { width: auto; margin-right: 8px; }
+            .cat-section { margin: 8px 0; border: 1px solid #252740; border-radius: 6px; overflow: hidden; }
+            .cat-section-header { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: #1e2035; cursor: pointer; user-select: none; }
+            .cat-section-header:hover { background: #252740; }
+            .cat-section-header strong { color: #007bff; font-size: 13px; flex: 1; }
+            .cat-section-header .hint { color: #666; font-size: 11px; }
+            .cat-section-header .chevron { color: #007bff; font-size: 11px; transition: transform 0.2s; display: inline-block; }
+            .cat-section-header .chevron.open { transform: rotate(180deg); }
+            .cat-section-body { padding: 6px 8px; display: none; }
+            .cat-checkbox { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+            .cat-checkbox input[type="checkbox"] { width: auto; margin: 0; }
+            .cat-checkbox label { display: flex; align-items: center; gap: 8px; cursor: pointer; color: #ddd; font-size: 13px; flex: 1; min-width: 0; }
+            .cat-checkbox label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+            .cat-master { width: auto; margin: 0; }
+            .cat-rename { flex: 1; min-width: 0; padding: 4px 6px; border-radius: 4px; border: 1px solid #333; background: #0f1120; color: #aaa; font-size: 11px; box-sizing: border-box; }
+            .cat-rename:focus { border-color: #007bff; outline: none; color: #fff; }
+            .cat-rename::placeholder { color: #555; font-style: italic; }
             .loading-spinner { text-align: center; color: #aaa; }
         </style></head>
         <body>
@@ -240,17 +254,47 @@ app.get("/configure", (req, res) => {
                             const saved = selectedCategories[i] || { tv: [], movie: [], series: [] };
 
                             ['tv', 'movie', 'series'].forEach(type => {
-                                const typeLabel = type === 'tv' ? 'TV' : (type === 'movie' ? 'Filmes' : 'Séries');
-                                html += \`<p style="color:#aaa; margin:8px 0 2px;">\${typeLabel}:</p>\`;
-                                if (cats[type] && cats[type].length > 0) {
-                                    cats[type].forEach(cat => {
-                                        const checked = saved[type].includes(cat) ? 'checked' : '';
-                                        html += \`<div class="cat-checkbox"><label><input type="checkbox" class="cat-check" data-list="\${i}" data-type="\${type}" value="\${cat}" \${checked}> \${cat}</label></div>\`;
-                                    });
-                                } else {
-                                    html += '<p style="color: #666; font-size:12px;">Nenhuma categoria disponível</p>';
-                                }
-                            });
+    const typeLabel = type === 'tv' ? 'TV' : (type === 'movie' ? 'Filmes' : 'Séries');
+    const groupId = \`\${i}_\${type}\`;
+    const isFirstConfig = !selectedCategories[i];
+    const savedList = (selectedCategories[i] && selectedCategories[i][type]) ? selectedCategories[i][type] : [];
+    const total = cats[type] ? cats[type].length : 0;
+
+    html += \`<div class="cat-section">
+        <div class="cat-section-header" onclick="toggleSection('\${groupId}')">
+            <input type="checkbox" class="cat-master" data-group="\${groupId}" \${isFirstConfig ? 'checked' : ''} onclick="event.stopPropagation();" onchange="toggleAllCats('\${groupId}', this.checked)">
+            <strong>\${typeLabel}</strong>
+            <span class="hint">\${total} categorias</span>
+            <span class="chevron" id="chev-\${groupId}">▼</span>
+        </div>
+        <div class="cat-section-body" id="body-\${groupId}">\`;
+
+    if (total > 0) {
+        cats[type].forEach(cat => {
+            let isChecked = isFirstConfig ? true : false;
+            let customName = '';
+            for (const item of savedList) {
+                if (typeof item === 'string' && item === cat) { isChecked = true; break; }
+                if (item && item.original === cat) {
+                    isChecked = true;
+                    if (item.custom && item.custom !== cat) customName = item.custom;
+                    break;
+                }
+            }
+            html += \`<div class="cat-checkbox">
+                <label>
+                    <input type="checkbox" class="cat-check" data-list="\${i}" data-type="\${type}" data-group="\${groupId}" value="\${cat}" \${isChecked ? 'checked' : ''} onchange="updateMasterCheckbox('\${groupId}')">
+                    <span title="\${cat}">\${cat}</span>
+                </label>
+                <input type="text" class="cat-rename" data-list="\${i}" data-type="\${type}" data-original="\${cat}" placeholder="novo nome" value="\${customName}">
+            </div>\`;
+        });
+    } else {
+        html += '<p style="color: #555; font-size:11px; margin:2px 0;">Sem categorias</p>';
+    }
+
+    html += '</div></div>';
+});
                         } catch (e) {
                             html += '<p style="color: red;">Erro ao obter categorias</p>';
                         }
@@ -263,20 +307,52 @@ app.get("/configure", (req, res) => {
                     document.getElementById('categoryModal').style.display = 'none';
                 }
 
+                function toggleSection(groupId) {
+    const body = document.getElementById('body-' + groupId);
+    const chev = document.getElementById('chev-' + groupId);
+    if (!body) return;
+    if (body.style.display === 'block') {
+        body.style.display = 'none';
+        if (chev) chev.classList.remove('open');
+    } else {
+        body.style.display = 'block';
+        if (chev) chev.classList.add('open');
+    }
+}
+
+function toggleAllCats(groupId, checked) {
+    document.querySelectorAll(\`.cat-check[data-group="\${groupId}"]\`).forEach(cb => {
+        cb.checked = checked;
+    });
+}
+
+function updateMasterCheckbox(groupId) {
+    const all = document.querySelectorAll(\`.cat-check[data-group="\${groupId}"]\`);
+    const checked = document.querySelectorAll(\`.cat-check[data-group="\${groupId}"]:checked\`);
+    const master = document.querySelector(\`.cat-master[data-group="\${groupId}"]\`);
+    if (master) {
+        master.checked = all.length > 0 && all.length === checked.length;
+        master.indeterminate = checked.length > 0 && checked.length < all.length;
+    }
+}
+
                 function saveCategories() {
-                    const checks = document.querySelectorAll('.cat-check:checked');
-                    const newSelection = {};
-                    checks.forEach(cb => {
-                        const listIdx = parseInt(cb.dataset.list);
-                        const type = cb.dataset.type;
-                        const value = cb.value;
-                        if (!newSelection[listIdx]) newSelection[listIdx] = { tv: [], movie: [], series: [] };
-                        newSelection[listIdx][type].push(value);
-                    });
-                    selectedCategories = newSelection;
-                    closeCategoryModal();
-                    alert('Categorias selecionadas guardadas!');
-                }
+    const newSelection = {};
+    document.querySelectorAll('.cat-checkbox').forEach(div => {
+        const cb = div.querySelector('.cat-check');
+        if (!cb || !cb.checked) return;
+        const renameInput = div.querySelector('.cat-rename');
+        const listIdx = parseInt(cb.dataset.list);
+        const type = cb.dataset.type;
+        const original = cb.value;
+        const custom = renameInput && renameInput.value.trim() ? renameInput.value.trim() : original;
+        if (!newSelection[listIdx]) newSelection[listIdx] = { tv: [], movie: [], series: [] };
+        newSelection[listIdx][type].push({ original, custom });
+    });
+    selectedCategories = newSelection;
+    closeCategoryModal();
+    alert('Categorias selecionadas guardadas!');
+}
 
                 function getListDataFromBox(box) {
                     const type = box.querySelector('.type').value;
