@@ -123,40 +123,33 @@ async function createStreamLink(auth, config, stalkerCmd, type, sNum = null) {
 
     const opts = getAxiosOpts(config, { headers: auth.authData.headers, timeout: 5000 }, config.proxy);
 
-    // Lista de variantes, por ordem de tentativa
-    const variants = [
-        // 1. cmd sem long_lived (o que funciona no HuggingFace)
-        { url: () => `${auth.api}type=${cmdType}&action=create_link&cmd=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&JsHttpRequest=1-0` },
-        // 2. cmd com long_lived
-        { url: () => `${auth.api}type=${cmdType}&action=create_link&cmd=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0` },
-        // 3. video_id sem long_lived
-        { url: () => `${auth.api}type=${cmdType}&action=create_link&video_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&JsHttpRequest=1-0` },
-        // 4. video_id com long_lived
-        { url: () => `${auth.api}type=${cmdType}&action=create_link&video_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0` }
-    ];
+    // Tentativa 1: comando original (cmd)
+    let linkUrl = `${auth.api}type=${cmdType}&action=create_link&cmd=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0`;
+    let res = await axios.get(linkUrl, opts).catch(() => ({}));
+    let url = extractUrl(res.data?.js);
 
-    // Séries — variantes adicionais
-    if (type === "series") {
-        variants.push({ url: () => `${auth.api}type=series&action=create_link&video_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&JsHttpRequest=1-0` });
-        variants.push({ url: () => `${auth.api}type=series&action=create_link&video_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0` });
+    // Tentativa 2: video_id
+    if (!url) {
+        linkUrl = `${auth.api}type=${cmdType}&action=create_link&video_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0`;
+        res = await axios.get(linkUrl, opts).catch(() => ({}));
+        url = extractUrl(res.data?.js);
     }
 
-    // Filmes e séries — movie_id
-    if (type === "series" || type === "movie") {
-        variants.push({ url: () => `${auth.api}type=vod&action=create_link&movie_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&JsHttpRequest=1-0` });
-        variants.push({ url: () => `${auth.api}type=vod&action=create_link&movie_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0` });
+    // Tentativa 3: para séries
+    if (!url && type === "series") {
+        linkUrl = `${auth.api}type=series&action=create_link&video_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0`;
+        res = await axios.get(linkUrl, opts).catch(() => ({}));
+        url = extractUrl(res.data?.js);
     }
 
-    // Tentar cada variante até uma devolver URL válido
-    for (const v of variants) {
-        try {
-            const res = await axios.get(v.url(), opts).catch(() => ({}));
-            const url = extractUrl(res.data?.js);
-            if (url) return url;
-        } catch(e) { continue; }
+    // Tentativa 4: movie_id (para filmes e séries)
+    if (!url && (type === "series" || type === "movie")) {
+        linkUrl = `${auth.api}type=vod&action=create_link&movie_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0`;
+        res = await axios.get(linkUrl, opts).catch(() => ({}));
+        url = extractUrl(res.data?.js);
     }
 
-    return null;
+    return url;
 }
 
 function extractUrl(jsData) {
