@@ -297,7 +297,8 @@ const addon = {
         if (l.selectedCategories) {
     const sel = l.selectedCategories;
     const applySelections = (list, originalCats) => {
-        if (!list || list.length === 0) return [];
+        // Se não há seleção → devolve TODAS
+        if (!list || list.length === 0) return originalCats;
         const origSelected = new Set();
         const origToCustom = {};
         list.forEach(item => {
@@ -309,9 +310,13 @@ const addon = {
                 origToCustom[item.original] = (item.custom && item.custom.trim()) ? item.custom.trim() : item.original;
             }
         });
-        return originalCats
-            .filter(cat => origSelected.has(cat))
-            .map(cat => origToCustom[cat] || cat);
+        const filtered = originalCats.filter(cat => origSelected.has(cat));
+        // Se filtrou tudo → devolve TODAS (fallback)
+        if (filtered.length === 0 && originalCats.length > 0) {
+            console.log(`[MANIFEST] Filtragem vazia — a devolver todas as categorias.`);
+            return originalCats;
+        }
+        return filtered.map(cat => origToCustom[cat] || cat);
     };
     tvG = applySelections(sel.tv, tvG);
     movG = applySelections(sel.movie, movG);
