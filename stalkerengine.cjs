@@ -165,7 +165,7 @@ function extractUrl(jsData) {
     if (!url && typeof jsData === 'object') {
         url = Object.values(jsData).find(v => typeof v === 'string' && (v.startsWith('http') || v.includes('://')));
     }
-    return url ? url.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "") : null;
+    return url ? url.trim().replace(/^['"`]?(ffrt|ffmpeg|ffrt2|rtmp)['"`]?\s+/i, "").trim() : null;
 }
 
 // ============================================================
