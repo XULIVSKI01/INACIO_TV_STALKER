@@ -780,7 +780,7 @@ if (effectiveGenre && config.selectedCategories) {
 
                     if (typeof cmdUrl === 'string' && cmdUrl.trim() !== "") {
                         console.log(`[STREAMS] Sucesso! URL original recebido: ${cmdUrl}`);
-                        let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
+                        let cleanUrl = cmdUrl.replace(/^['"`]?(ffrt|ffmpeg|ffrt2|rtmp)['"`]?\s+/i, "").trim();
                         if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
                             cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
                         }
