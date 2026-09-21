@@ -95,6 +95,49 @@ async function parseM3U(url, config) {
     };
 };
 
+// ============================================================
+// TRACKER DE ÚLTIMO CANAL POR MAC (para session_end)
+// ============================================================
+if (!global.lastChannelByMac) global.lastChannelByMac = {};
+
+async function tryEndPreviousSession(config, currentChannelId, addonRef) {
+    const macKey = (config.mac || config.user || config.url || 'unknown').toUpperCase();
+    const prev = global.lastChannelByMac[macKey];
+
+    if (!prev) return;
+    if (prev.channelId === currentChannelId) return;
+
+    const age = Date.now() - prev.ts;
+    if (age > 60000) {
+        delete global.lastChannelByMac[macKey];
+        return;
+    }
+
+    try {
+        const auth = await addonRef.authenticate(config);
+        if (!auth) return;
+
+        const hdrs = addonRef.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 2000 });
+
+        const endpoints = [
+            `${auth.api}type=itv&action=session_end&cmd=${encodeURIComponent(prev.channelId)}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`,
+            `${auth.api}type=itv&action=unlink&cmd=${encodeURIComponent(prev.channelId)}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`,
+            `${auth.api}type=itv&action=stop&cmd=${encodeURIComponent(prev.channelId)}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`,
+            `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(prev.channelId)}&sn=${auth.authData.sn}&token=${auth.token}&force_ch_link_check=1&JsHttpRequest=1-0`
+        ];
+
+        for (const url of endpoints) {
+            try {
+                await axios.get(url, hdrs);
+                console.log(`[SESSION_END] Canal anterior ${prev.channelId} fechado (${age}ms depois)`);
+                break;
+            } catch(e) { continue; }
+        }
+    } catch(e) { /* ignorar */ }
+
+    delete global.lastChannelByMac[macKey];
+}
+
 const addon = {
     getAxiosOpts(config, extraOpts = {}) {
         let opts = { ...extraOpts };
@@ -727,11 +770,18 @@ if (effectiveGenre && config.selectedCategories) {
         const sId = parts[2];
         const name = decodeURIComponent(parts[3] || "Stream");
         const lists = this.parseConfig(configBase64); const config = lists[lIdx];
-        if (!config) return { streams: [] };
-        const expectedSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
-        if (sig && sig !== expectedSig) return { streams: [] };
+if (!config) return { streams: [] };
+const expectedSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
+if (sig && sig !== expectedSig) return { streams: [] };
 
-        const pUrl = `https://${host}/proxy/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(sId)}?type=${type}`;
+// Fechar sessão anterior (se houver) para evitar sobreposição no portal
+if (type === 'tv' && config?.type === 'stalker') {
+    await tryEndPreviousSession(config, sId, this);
+    const macKey = (config.mac || config.user || config.url || 'unknown').toUpperCase();
+    global.lastChannelByMac[macKey] = { channelId: sId, ts: Date.now() };
+}
+
+const pUrl = `https://${host}/proxy/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(sId)}?type=${type}`;
         let streams = [];
         let directAdded = false;
 
