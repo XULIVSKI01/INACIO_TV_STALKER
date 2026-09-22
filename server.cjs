@@ -404,6 +404,32 @@ function updateMasterCheckbox(groupId) {
     `);
 });
 
+// ===== ENDPOINT DE TESTE (temporário) =====
+app.get("/test-faria", async (req, res) => {
+    const results = {};
+    const endpoints = [
+        'http://faria1.102025.com/portal.php?type=stb&action=handshake&mac=00:1A:79:BC:8B:4D&JsHttpRequest=1-0',
+        'http://faria1.102025.com/c/portal.php?type=stb&action=handshake&mac=00:1A:79:BC:8B:4D&JsHttpRequest=1-0',
+        'http://faria1.102025.com/server/load.php?type=stb&action=handshake&mac=00:1A:79:BC:8B:4D&JsHttpRequest=1-0'
+    ];
+    for (const url of endpoints) {
+        try {
+            const r = await axios.get(url, {
+                timeout: 8000,
+                validateStatus: () => true,
+                headers: { 'User-Agent': 'curl/8.21.0', 'Accept': '*/*' }
+            });
+            results[url] = {
+                status: r.status,
+                body_preview: typeof r.data === 'string' ? r.data.substring(0, 200) : JSON.stringify(r.data).substring(0, 200)
+            };
+        } catch (e) {
+            results[url] = { error: e.message };
+        }
+    }
+    res.json(results);
+});
+
 // Rotas do Stremio
 app.get("/:config/manifest.json", async (req, res) => res.json(await addon.getManifest(req.params.config)));
 app.get("/:config/catalog/:type/:id/:extra?.json", async (req, res) => {
