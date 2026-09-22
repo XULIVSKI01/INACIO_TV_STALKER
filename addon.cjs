@@ -138,6 +138,8 @@ async function tryEndPreviousSession(config, currentChannelId, addonRef) {
     delete global.lastChannelByMac[macKey];
 }
 
+if (!global.streamLinkCache) global.streamLinkCache = {};
+
 const addon = {
     getAxiosOpts(config, extraOpts = {}) {
         let opts = { ...extraOpts };
@@ -820,6 +822,31 @@ const pUrl = `https://${host}/proxy/${encodeURIComponent(configBase64)}/${lIdx}/
                         realCmd = partsCmd[0];
                         sNum = partsCmd[1];
                     }
+
+                    console.log(`[STREAMS] Stalker - Extraindo link para cmd/id=${realCmd}, series=${sNum || 'N/A'}`);
+
+// Cache de link por canal (evita criar sessões duplicadas)
+const linkCacheKey = `${config.url}_${config.mac || ''}_${type}_${realCmd}_${sNum || ''}`;
+let cmdUrl = null;
+const cachedLink = global.streamLinkCache[linkCacheKey];
+if (cachedLink && Date.now() - cachedLink.ts < 30000) {
+    cmdUrl = cachedLink.url;
+    console.log(`[LINK CACHE] Reutilizado (${Date.now() - cachedLink.ts}ms) para ${realCmd}`);
+}
+
+if (!cmdUrl) {
+    cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
+    if (!cmdUrl || cmdUrl.trim() === "") {
+        console.log(`[STREAMS] Link não recebido. Forçando novo token...`);
+        auth = await engine.authenticate(config, config.proxy);
+        if (auth) cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
+    }
+    if (cmdUrl && typeof cmdUrl === 'string' && cmdUrl.trim() !== '') {
+        global.streamLinkCache[linkCacheKey] = { url: cmdUrl, ts: Date.now() };
+        console.log(`[LINK CACHE] Guardado para ${realCmd}`);
+    }
+} 
+                    /*
                     console.log(`[STREAMS] Stalker - Extraindo link para cmd/id=${realCmd}, series=${sNum || 'N/A'}`);
 
                     let cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
@@ -828,6 +855,7 @@ const pUrl = `https://${host}/proxy/${encodeURIComponent(configBase64)}/${lIdx}/
                         auth = await engine.authenticate(config, config.proxy);
                         if (auth) cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
                     }
+                    */
 
                     if (typeof cmdUrl === 'string' && cmdUrl.trim() !== "") {
                         console.log(`[STREAMS] Sucesso! URL original recebido: ${cmdUrl}`);
