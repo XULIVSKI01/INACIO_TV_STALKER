@@ -241,7 +241,8 @@ const addon = {
                     return result;
                 }
             } catch (e) {
-                console.warn(`[AUTH SCAN] ${path} recusado (Status: ${e.response?.status || 'OFFLINE'})`);
+                const body = e.response?.data ? (typeof e.response.data === 'string' ? e.response.data.substring(0, 300) : JSON.stringify(e.response.data).substring(0, 300)) : '(sem corpo)';
+                      console.warn(`[AUTH SCAN] ${path} recusado (Status: ${e.response?.status || 'OFFLINE'}) Body: ${body}`);
             }
         }
 
