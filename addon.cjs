@@ -208,9 +208,9 @@ const addon = {
             'Accept': 'application/json, text/javascript, */*; q=0.01',
             'X-Runtime-Info': 'render: gles; s_type: 250; s_ver: 0.2.18-r14;',
             'X-Requested-With': 'XMLHttpRequest',
-            'X-Forwarded-For': fakeResidencialIP,
-            'X-Real-IP': fakeResidencialIP,
-            'Client-IP': fakeResidencialIP,
+            //'X-Forwarded-For': fakeResidencialIP,
+            //'X-Real-IP': fakeResidencialIP,
+            //'Client-IP': fakeResidencialIP,
             'Cookie': `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe/Lisbon;`
         };
 
