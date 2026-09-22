@@ -96,6 +96,72 @@ async function parseM3U(url, config) {
 };
 
 // ============================================================
+// TRACKER DE ÚLTIMO CANAL POR MAC (para session_end agressivo)
+// ============================================================
+if (!global.lastChannelByMac) global.lastChannelByMac = {};
+
+async function tryEndPreviousSession(config, currentChannelId, addonRef) {
+    const macKey = (config.mac || config.user || config.url || 'unknown').toUpperCase();
+    const prev = global.lastChannelByMac[macKey];
+
+    if (!prev) return false;
+    if (prev.channelId === currentChannelId) return false;
+
+    const age = Date.now() - prev.ts;
+    if (age > 120000) {
+        delete global.lastChannelByMac[macKey];
+        return false;
+    }
+
+    try {
+        const auth = await addonRef.authenticate(config);
+        if (!auth) return false;
+
+        const hdrs = addonRef.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 2000 });
+        const sn = auth.authData.sn;
+        const tok = auth.token;
+        const cmd = prev.channelId;
+
+        // Bater forte com várias ações até o portal confirmar
+        const endpoints = [
+            `${auth.api}type=itv&action=session_end&cmd=${encodeURIComponent(cmd)}&sn=${sn}&token=${tok}&JsHttpRequest=1-0`,
+            `${auth.api}type=itv&action=unlink&cmd=${encodeURIComponent(cmd)}&sn=${sn}&token=${tok}&JsHttpRequest=1-0`,
+            `${auth.api}type=itv&action=stop&cmd=${encodeURIComponent(cmd)}&sn=${sn}&token=${tok}&JsHttpRequest=1-0`,
+            `${auth.api}type=itv&action=unsubscribe&cmd=${encodeURIComponent(cmd)}&sn=${sn}&token=${tok}&JsHttpRequest=1-0`,
+            `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(cmd)}&sn=${sn}&token=${tok}&force_ch_link_check=1&JsHttpRequest=1-0`
+        ];
+
+        // Tentar até 3 rondas de 5 endpoints, com pausa curta entre rondas
+        let closed = false;
+        for (let ronda = 0; ronda < 3 && !closed; ronda++) {
+            for (const url of endpoints) {
+                try {
+                    const r = await axios.get(url, hdrs);
+                    const body = r.data?.js || r.data || '';
+                    // Se o portal devolver algo tipo "session closed" ou erro específico, paramos
+                    if (typeof body === 'string' && /closed|ended|ok/i.test(body)) {
+                        closed = true;
+                        break;
+                    }
+                    if (body && typeof body === 'object' && (body.error || body.msg)) {
+                        closed = true;
+                        break;
+                    }
+                } catch(e) { continue; }
+            }
+            if (!closed && ronda < 2) {
+                await new Promise(r => setTimeout(r, 300));
+            }
+        }
+
+        console.log(`[SESSION_END] Canal ${cmd} fechado (era ${age}ms antigo, ronda ${closed ? 'sucesso' : 'final'})`);
+    } catch(e) { /* ignorar */ }
+
+    delete global.lastChannelByMac[macKey];
+    return true;
+}
+/*
+// ============================================================
 // TRACKER DE ÚLTIMO CANAL POR MAC (para session_end)
 // ============================================================
 if (!global.lastChannelByMac) global.lastChannelByMac = {};
@@ -133,11 +199,11 @@ async function tryEndPreviousSession(config, currentChannelId, addonRef) {
                 break;
             } catch(e) { continue; }
         }
-    } catch(e) { /* ignorar */ }
+    } catch(e) { /* ignorar */ /*}
 
     delete global.lastChannelByMac[macKey];
 }
-
+*/
 if (!global.streamLinkCache) global.streamLinkCache = {};
 
 const addon = {
@@ -777,13 +843,23 @@ if (!config) return { streams: [] };
 const expectedSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
 if (sig && sig !== expectedSig) return { streams: [] };
 
+        if (type === 'tv' && config?.type === 'stalker') {
+    const wasClosed = await tryEndPreviousSession(config, sId, this);
+    if (wasClosed) {
+        // Dar tempo ao portal para processar o fecho antes de pedir o próximo link
+        await new Promise(r => setTimeout(r, 500));
+    }
+    const macKey = (config.mac || config.user || config.url || 'unknown').toUpperCase();
+    global.lastChannelByMac[macKey] = { channelId: sId, ts: Date.now() };
+        }
+/*
 // Fechar sessão anterior (se houver) para evitar sobreposição no portal
 if (type === 'tv' && config?.type === 'stalker') {
     await tryEndPreviousSession(config, sId, this);
     const macKey = (config.mac || config.user || config.url || 'unknown').toUpperCase();
     global.lastChannelByMac[macKey] = { channelId: sId, ts: Date.now() };
 }
-
+*/
 const pUrl = `https://${host}/proxy/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(sId)}?type=${type}`;
         let streams = [];
         let directAdded = false;
