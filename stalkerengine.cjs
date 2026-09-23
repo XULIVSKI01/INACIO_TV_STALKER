@@ -9,126 +9,107 @@ const { spawn } = require('child_process');
 const authCache = new Map();
 const CACHE_TTL = 10 * 60 * 1000;
 
-// Locks de autenticação em curso (evita handshakes duplicados em paralelo)
-const authLocks = new Map();
-
 // ============================================================
-// 1. AUTENTICAÇÃO (com lock anti-race)
+// 1. AUTENTICAÇÃO (copiada do addon.cjs, com suporte a proxy)
 // ============================================================
 async function authenticate(config, proxyUrl = null) {
     const mac = (config.mac || "00:1A:79:00:00:00").toUpperCase();
     const cleanBase = config.url.trim().replace(/\/$/, "");
     const cacheKey = `auth_${cleanBase}_${mac}`;
 
-    // Cache válido? devolve logo
     if (authCache.has(cacheKey)) {
         const cached = authCache.get(cacheKey);
         if (Date.now() - cached.timestamp < CACHE_TTL) return cached.data;
     }
 
-    // Já há autenticação em curso para este MAC+portal? Espera por ela
-    if (authLocks.has(cacheKey)) {
-        return await authLocks.get(cacheKey);
-    }
+    const fakeResidencialIP = '188.81.121.45';
+    const deviceId = crypto.createHash('md5').update(mac).digest('hex').toUpperCase();
+    const shortHash = crypto.createHash('md5').update(mac).digest('hex').substring(0, 13).toUpperCase();
+    const serialNumber = `8CA3${shortHash.substring(4)}`;
 
-    // Cria a promise da autenticação e regista no lock
-    const promise = (async () => {
-        const fakeResidencialIP = '188.81.121.45';
-        const deviceId = crypto.createHash('md5').update(mac).digest('hex').toUpperCase();
-        const shortHash = crypto.createHash('md5').update(mac).digest('hex').substring(0, 13).toUpperCase();
-        const serialNumber = `8CA3${shortHash.substring(4)}`;
+    const universalHeaders = {
+        'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
+        'X-User-Agent': `Model: MAG250; SW: 2.18-r14-pub-250; STB_active: true; Device ID: ${deviceId}; Device ID 2: ${deviceId}; Signature: 88e76854; SN: ${serialNumber}`,
+        'Referer': `${cleanBase}/c/`,
+        'Accept': 'application/json, text/javascript, */*; q=0.01',
+        'X-Runtime-Info': 'render: gles; s_type: 250; s_ver: 0.2.18-r14;',
+        'X-Requested-With': 'XMLHttpRequest',
+        'X-Forwarded-For': fakeResidencialIP,
+        'X-Real-IP': fakeResidencialIP,
+        'Client-IP': fakeResidencialIP,
+        'Cookie': `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe/Lisbon;`
+    };
 
-        const universalHeaders = {
-            'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
-            'X-User-Agent': `Model: MAG250; SW: 2.18-r14-pub-250; STB_active: true; Device ID: ${deviceId}; Device ID 2: ${deviceId}; Signature: 88e76854; SN: ${serialNumber}`,
-            'Referer': `${cleanBase}/c/`,
-            'Accept': 'application/json, text/javascript, */*; q=0.01',
-            'X-Runtime-Info': 'render: gles; s_type: 250; s_ver: 0.2.18-r14;',
-            'X-Requested-With': 'XMLHttpRequest',
-            'X-Forwarded-For': fakeResidencialIP,
-            'X-Real-IP': fakeResidencialIP,
-            'Client-IP': fakeResidencialIP,
-            'Cookie': `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe/Lisbon;`
-        };
+    const paths = ['/c/portal.php', '/portal.php', '/server/load.php', '/stalker_portal/server/load.php'];
 
-        const paths = ['/c/portal.php', '/portal.php', '/server/load.php', '/stalker_portal/server/load.php'];
+    console.log(`[STB-EMU MODE] Tentando enganar portal: ${cleanBase}`);
 
-        console.log(`[STB-EMU MODE] Tentando enganar portal: ${cleanBase}`);
-
-        for (const path of paths) {
-            const fullUrl = `${cleanBase}${path}?`;
-            try {
-                const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
-                const res = await axios.get(handshakeUrl, getAxiosOpts(config, { headers: universalHeaders, timeout: 5000 }, proxyUrl));
-                let data = res.data;
-                if (typeof data === 'string') data = JSON.parse(data.replace(/\/\*[\s\S]*?\*\//g, "").trim());
-                if (data?.js?.token) {
-                    const token = data.js.token;
-                    console.log(`[AUTH SUCCESS] Servidor enganado em: ${path}`);
-                    universalHeaders.Authorization = `Bearer ${token}`;
-                    universalHeaders.Cookie += ` token=${token}; access_token=${token};`;
-                    try { await axios.get(`${fullUrl}type=stb&action=get_profile&token=${token}&JsHttpRequest=1-0`, getAxiosOpts(config, { headers: universalHeaders })); } catch (e) { }
-                    const result = {
-                        api: fullUrl,
-                        apiAlt: fullUrl.replace(/\/[^\/]+$/, '/server/load.php?'),
-                        token,
-                        authData: { sn: data.js.sn || deviceId.substring(0, 13), headers: universalHeaders }
-                    };
-                    authCache.set(cacheKey, { data: result, timestamp: Date.now() });
-                    return result;
-                }
-            } catch (e) {
-                console.warn(`[AUTH SCAN] ${path} recusado (Status: ${e.response?.status || 'OFFLINE'})`);
-            }
-        }
-
-        // Fallback clássico (método antigo, sem IP falso)
-        console.log(`[AUTH] Caminhos modernos falharam. A tentar método clássico...`);
-        const classicBase = cleanBase.replace(/\/c$/, '');
-        const classicPaths = ['/c/portal.php', '/stalker_portal/c/portal.php', '/portal.php', '/server/load.php'];
-
-        for (const path of classicPaths) {
-            const fullUrl = `${classicBase}${path}?`;
-            try {
-                const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
-                const classicHeaders = {
-                    'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
-                    'Referer': `${classicBase}/c/`,
-                    'Accept': '*/*',
-                    'Connection': 'keep-alive',
-                    'Cookie': `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe/Lisbon;`
+    for (const path of paths) {
+        const fullUrl = `${cleanBase}${path}?`;
+        try {
+            const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
+            const res = await axios.get(handshakeUrl, getAxiosOpts(config, { headers: universalHeaders, timeout: 5000 }, proxyUrl));
+            let data = res.data;
+            if (typeof data === 'string') data = JSON.parse(data.replace(/\/\*[\s\S]*?\*\//g, "").trim());
+            if (data?.js?.token) {
+                const token = data.js.token;
+                console.log(`[AUTH SUCCESS] Servidor enganado em: ${path}`);
+                universalHeaders.Authorization = `Bearer ${token}`;
+                universalHeaders.Cookie += ` token=${token}; access_token=${token};`;
+                try { await axios.get(`${fullUrl}type=stb&action=get_profile&token=${token}&JsHttpRequest=1-0`, getAxiosOpts(config, { headers: universalHeaders })); } catch (e) { }
+                const result = {
+                    api: fullUrl,
+                    apiAlt: fullUrl.replace(/\/[^\/]+$/, '/server/load.php?'),
+                    token,
+                    authData: { sn: data.js.sn || deviceId.substring(0, 13), headers: universalHeaders }
                 };
-                const res = await axios.get(handshakeUrl, getAxiosOpts(config, { headers: classicHeaders, timeout: 8000 }, proxyUrl));
-                let data = res.data;
-                if (typeof data === 'string') data = JSON.parse(data.replace(/\/\*[\s\S]*?\*\//g, "").trim());
-                if (data?.js?.token) {
-                    const token = data.js.token;
-                    console.log(`[AUTH SUCCESS] Clássico funcionou em: ${path}`);
-                    classicHeaders.Authorization = `Bearer ${token}`;
-                    classicHeaders.Cookie += ` token=${token}; access_token=${token};`;
-                    const result = {
-                        api: `${classicBase}${path}?`,
-                        apiAlt: `${classicBase}/server/load.php?`,
-                        token,
-                        authData: { sn: data.js.sn || classicHeaders.sn, headers: classicHeaders }
-                    };
-                    authCache.set(cacheKey, { data: result, timestamp: Date.now() });
-                    return result;
-                }
-            } catch (e) {
-                console.warn(`[AUTH SCAN] Clássico recusado em ${path} (${e.message})`);
+                authCache.set(cacheKey, { data: result, timestamp: Date.now() });
+                return result;
             }
+        } catch (e) {
+            console.warn(`[AUTH SCAN] ${path} recusado (Status: ${e.response?.status || 'OFFLINE'})`);
         }
-        console.error(`[AUTH FATAL] Nenhum caminho ou perfil funcionou para este MAC.`);
-        return null;
-    })();
-
-    authLocks.set(cacheKey, promise);
-    try {
-        return await promise;
-    } finally {
-        authLocks.delete(cacheKey);
     }
+
+// Fallback clássico (método antigo, sem IP falso)
+console.log(`[AUTH] Caminhos modernos falharam. A tentar método clássico...`);
+const classicBase = cleanBase.replace(/\/c$/, '');
+const classicPaths = ['/c/portal.php', '/stalker_portal/c/portal.php', '/portal.php', '/server/load.php'];
+
+for (const path of classicPaths) {
+    const fullUrl = `${classicBase}${path}?`;
+    try {
+        const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
+        const classicHeaders = {
+    'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
+    'Referer': `${classicBase}/c/`,
+    'Accept': '*/*',
+    'Connection': 'keep-alive',
+    'Cookie': `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe/Lisbon;`
+};
+        const res = await axios.get(handshakeUrl, getAxiosOpts(config, { headers: classicHeaders, timeout: 8000 }, proxyUrl));
+        let data = res.data;
+        if (typeof data === 'string') data = JSON.parse(data.replace(/\/\*[\s\S]*?\*\//g, "").trim());
+        if (data?.js?.token) {
+            const token = data.js.token;
+            console.log(`[AUTH SUCCESS] Clássico funcionou em: ${path}`);
+            classicHeaders.Authorization = `Bearer ${token}`;
+            classicHeaders.Cookie += ` token=${token}; access_token=${token};`;
+            const result = {
+                api: `${classicBase}${path}?`,
+                apiAlt: `${classicBase}/server/load.php?`,
+                token,
+                authData: { sn: data.js.sn || classicHeaders.sn, headers: classicHeaders }
+            };
+            authCache.set(cacheKey, { data: result, timestamp: Date.now() });
+            return result;
+        }
+    } catch (e) {
+        console.warn(`[AUTH SCAN] Clássico recusado em ${path} (${e.message})`);
+    }
+}
+    console.error(`[AUTH FATAL] Nenhum caminho ou perfil funcionou para este MAC.`);
+    return null;
 }
 
 // ============================================================
@@ -184,7 +165,7 @@ function extractUrl(jsData) {
     if (!url && typeof jsData === 'object') {
         url = Object.values(jsData).find(v => typeof v === 'string' && (v.startsWith('http') || v.includes('://')));
     }
-    return url ? url.trim().replace(/^['"`]?(ffrt|ffmpeg|ffrt2|rtmp)['"`]?\s+/i, "").trim() : null;
+    return url ? url.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "") : null;
 }
 
 // ============================================================
@@ -196,32 +177,32 @@ function startFfmpegRelay(urlToPlay, headersObj, proxyUrl = null, legacyMode = f
         .join('\r\n') + '\r\n\r\n';
 
     const ffmpegArgs = [
-        '-headers', headersStr,
-        '-reconnect', '1',
-        '-reconnect_streamed', '1',
-        '-reconnect_delay_max', '5',
-        '-fflags', 'nobuffer+discardcorrupt+genpts',
-        '-err_detect', 'ignore_err',
-        '-buffer_size', '1024k',
-        '-max_delay', '500000',
-        '-i', urlToPlay,
-        '-c', 'copy',
-        '-f', 'mpegts',
-        '-loglevel', 'error',
-        'pipe:1'
-    ];
+    '-headers', headersStr,
+    '-reconnect', '1',
+    '-reconnect_streamed', '1',
+    '-reconnect_delay_max', '5',
+    '-fflags', 'nobuffer+discardcorrupt+genpts',
+    '-err_detect', 'ignore_err',
+    '-buffer_size', '1024k',
+    '-max_delay', '500000',
+    '-i', urlToPlay,
+    '-c', 'copy',
+    '-f', 'mpegts',
+    '-loglevel', 'error',
+    'pipe:1'
+];
 
-    if (proxyUrl && proxyUrl.startsWith('http')) {
-        ffmpegArgs.unshift('-http_proxy', proxyUrl);
-        console.log(`[STALKER ENGINE] FFmpeg a usar proxy HTTP: ${proxyUrl}`);
-    }
+if (proxyUrl && proxyUrl.startsWith('http')) {
+    ffmpegArgs.unshift('-http_proxy', proxyUrl);
+    console.log(`[STALKER ENGINE] FFmpeg a usar proxy HTTP: ${proxyUrl}`);
+}
 
-    if (legacyMode) {
-        ffmpegArgs.splice(1, 0, '-re');
-        console.log(`[STALKER ENGINE] Modo LEGACY ativado (-re).`);
-    }
+if (legacyMode) {
+    ffmpegArgs.splice(1, 0, '-re');
+    console.log(`[STALKER ENGINE] Modo LEGACY ativado (-re).`);
+}
 
-    const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+const ffmpeg = spawn('ffmpeg', ffmpegArgs);
     const source = ffmpeg.stdout;
     ffmpeg.on('error', (err) => {
         console.error(`[STALKER ENGINE] Erro no FFmpeg: ${err.message}`);
@@ -345,15 +326,15 @@ function getAxiosOpts(config, extraOpts = {}, proxyUrl = null) {
 async function tryMultiplePipelines(cleanUrl, auth, config, type, res, sessions, streamKey, req) {
     let methods;
     if (cleanUrl.includes('play_token')) {
-        console.log(`[AUTO-DETECT] play_token detetado. Prioridade: ffmpeg-exact (1º repo) > ffmpeg-legacy > ...`);
-        methods = [
-            { name: 'ffmpeg-exact', fn: tryFfmpegExact },   // réplica exata do 1º repositório
-            { name: 'ffmpeg-legacy', fn: tryFfmpegStreamLegacy },
-            { name: 'ffmpeg-modern', fn: tryFfmpegModernRelay },
-            { name: 'legacy', fn: tryLegacyRelay },
-            { name: 'modern', fn: tryModernRelay },
-            { name: 'redirect', fn: tryRedirect }
-        ];
+    console.log(`[AUTO-DETECT] play_token detetado. Prioridade: ffmpeg-exact (1º repo) > ffmpeg-legacy > ...`);
+    methods = [
+        { name: 'ffmpeg-exact', fn: tryFfmpegExact },   // réplica exata do 1º repositório
+        { name: 'ffmpeg-legacy', fn: tryFfmpegStreamLegacy },
+        { name: 'ffmpeg-modern', fn: tryFfmpegModernRelay },
+        { name: 'legacy', fn: tryLegacyRelay },
+        { name: 'modern', fn: tryModernRelay },
+        { name: 'redirect', fn: tryRedirect }
+     ];
     } else {
         methods = [
             { name: 'direct', fn: tryDirectAccess },
