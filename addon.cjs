@@ -256,6 +256,11 @@ const addon = {
     },
 
     async authenticate(config) {
+    return await engine.authenticate(config, config.proxy);
+},
+    /*
+
+    async authenticate(config) {
         const mac = config.mac.toUpperCase();
         const cleanBase = config.url.trim().replace(/\/$/, "");
         const cacheKey = `auth_${cleanBase}_${mac}`;
@@ -272,9 +277,9 @@ const addon = {
         const universalHeaders = {
             'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
             'X-User-Agent': `Model: MAG250; SW: 2.18-r14-pub-250; STB_active: true; Device ID: ${deviceId}; Device ID 2: ${deviceId}; Signature: 88e76854; SN: ${serialNumber}`,
-            'Referer': `${cleanBase}/c/`,
-            'Accept': 'application/json, text/javascript, */*; q=0.01',
-            'X-Runtime-Info': 'render: gles; s_type: 250; s_ver: 0.2.18-r14;',
+            'Referer': `${cleanBase}/c/`,*/
+           // 'Accept': 'application/json, text/javascript, */*; q=0.01',
+           /* 'X-Runtime-Info': 'render: gles; s_type: 250; s_ver: 0.2.18-r14;',
             'X-Requested-With': 'XMLHttpRequest',
             'X-Forwarded-For': fakeResidencialIP,
             'X-Real-IP': fakeResidencialIP,
@@ -347,6 +352,7 @@ const addon = {
         console.error(`[AUTH FATAL] Nenhum caminho ou perfil funcionou para este MAC.`);
         return null;
     },
+    */
 
     async getManifest(configBase64) {
     console.log("[MANIFEST] Pedido de Manifest recebido.");
