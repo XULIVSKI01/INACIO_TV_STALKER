@@ -36,6 +36,9 @@ setInterval(() => {
     }
 }, 30000);
 
+// Endpoint leve para manter o serviço acordado (cron externo)
+app.get("/ping", (req, res) => res.status(200).send("pong"));
+
 // Página de Configuração (inalterada)
 app.get("/", (req, res) => res.redirect("/configure"));
 app.get("/configure", (req, res) => {
