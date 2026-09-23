@@ -95,122 +95,6 @@ async function parseM3U(url, config) {
     };
 };
 
-// ============================================================
-// TRACKER DE ÚLTIMO CANAL POR MAC (session_end multi-domínio)
-// ============================================================
-if (!global.lastChannelByMac) global.lastChannelByMac = {};
-
-async function tryEndPreviousSession(config, currentChannelId, addonRef) {
-    const macKey = (config.mac || config.user || config.url || 'unknown').toUpperCase();
-    const prev = global.lastChannelByMac[macKey];
-
-    if (!prev) return false;
-    if (prev.channelId === currentChannelId) return false;
-
-    const age = Date.now() - prev.ts;
-    if (age > 120000) {
-        delete global.lastChannelByMac[macKey];
-        return false;
-    }
-
-    try {
-        const auth = await addonRef.authenticate(config);
-        if (!auth) return false;
-
-        const hdrs = addonRef.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 3000 });
-        const sn = auth.authData.sn;
-        const tok = auth.token;
-        const cmd = prev.channelId;
-
-        // Montar lista de bases onde enviar session_end:
-        // - portal (auth)
-        // - domínio do stream anterior (se diferente)
-        const bases = new Set();
-        bases.add(auth.api);
-        if (auth.apiAlt) bases.add(auth.apiAlt);
-
-        if (prev.streamDomain) {
-            try {
-                const u = new URL(prev.streamDomain);
-                const host = u.host;
-                bases.add(`http://${host}/portal.php?`);
-                bases.add(`http://${host}/server/load.php?`);
-                bases.add(`http://${host}/c/portal.php?`);
-            } catch(e) {}
-        }
-
-        // Ações a disparar (todas, em paralelo, sem esperar resposta)
-        const actions = ['session_end', 'unlink', 'stop', 'unsubscribe'];
-
-        const promises = [];
-        for (const base of bases) {
-            for (const action of actions) {
-                const url = `${base}type=itv&action=${action}&cmd=${encodeURIComponent(cmd)}&sn=${sn}&token=${tok}&JsHttpRequest=1-0`;
-                promises.push(axios.get(url, hdrs).catch(() => {}));
-            }
-            // Também forçar com create_link + force_ch_link_check
-            const forceUrl = `${base}type=itv&action=create_link&cmd=${encodeURIComponent(cmd)}&sn=${sn}&token=${tok}&force_ch_link_check=1&JsHttpRequest=1-0`;
-            promises.push(axios.get(forceUrl, hdrs).catch(() => {}));
-        }
-
-        // Disparar tudo em paralelo e esperar no máximo 1.5s
-        await Promise.race([
-            Promise.all(promises),
-            new Promise(r => setTimeout(r, 1500))
-        ]);
-
-        console.log(`[SESSION_END] Canal ${cmd} fechado em ${bases.size} domínio(s), era ${age}ms antigo`);
-    } catch(e) { /* ignorar */ }
-
-    delete global.lastChannelByMac[macKey];
-    return true;
-}
-/*
-// ============================================================
-// TRACKER DE ÚLTIMO CANAL POR MAC (para session_end)
-// ============================================================
-if (!global.lastChannelByMac) global.lastChannelByMac = {};
-
-async function tryEndPreviousSession(config, currentChannelId, addonRef) {
-    const macKey = (config.mac || config.user || config.url || 'unknown').toUpperCase();
-    const prev = global.lastChannelByMac[macKey];
-
-    if (!prev) return;
-    if (prev.channelId === currentChannelId) return;
-
-    const age = Date.now() - prev.ts;
-    if (age > 60000) {
-        delete global.lastChannelByMac[macKey];
-        return;
-    }
-
-    try {
-        const auth = await addonRef.authenticate(config);
-        if (!auth) return;
-
-        const hdrs = addonRef.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 2000 });
-
-        const endpoints = [
-            `${auth.api}type=itv&action=session_end&cmd=${encodeURIComponent(prev.channelId)}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`,
-            `${auth.api}type=itv&action=unlink&cmd=${encodeURIComponent(prev.channelId)}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`,
-            `${auth.api}type=itv&action=stop&cmd=${encodeURIComponent(prev.channelId)}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`,
-            `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(prev.channelId)}&sn=${auth.authData.sn}&token=${auth.token}&force_ch_link_check=1&JsHttpRequest=1-0`
-        ];
-
-        for (const url of endpoints) {
-            try {
-                await axios.get(url, hdrs);
-                console.log(`[SESSION_END] Canal anterior ${prev.channelId} fechado (${age}ms depois)`);
-                break;
-            } catch(e) { continue; }
-        }
-    } catch(e) { /* ignorar */ /*}
-
-    delete global.lastChannelByMac[macKey];
-}
-*/
-if (!global.streamLinkCache) global.streamLinkCache = {};
-
 const addon = {
     getAxiosOpts(config, extraOpts = {}) {
         let opts = { ...extraOpts };
@@ -261,11 +145,6 @@ const addon = {
     },
 
     async authenticate(config) {
-    return await engine.authenticate(config, config.proxy);
-},
-    /*
-
-    async authenticate(config) {
         const mac = config.mac.toUpperCase();
         const cleanBase = config.url.trim().replace(/\/$/, "");
         const cacheKey = `auth_${cleanBase}_${mac}`;
@@ -282,9 +161,9 @@ const addon = {
         const universalHeaders = {
             'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
             'X-User-Agent': `Model: MAG250; SW: 2.18-r14-pub-250; STB_active: true; Device ID: ${deviceId}; Device ID 2: ${deviceId}; Signature: 88e76854; SN: ${serialNumber}`,
-            'Referer': `${cleanBase}/c/`,*/
-           // 'Accept': 'application/json, text/javascript, */*; q=0.01',
-           /* 'X-Runtime-Info': 'render: gles; s_type: 250; s_ver: 0.2.18-r14;',
+            'Referer': `${cleanBase}/c/`,
+            'Accept': 'application/json, text/javascript, */*; q=0.01',
+            'X-Runtime-Info': 'render: gles; s_type: 250; s_ver: 0.2.18-r14;',
             'X-Requested-With': 'XMLHttpRequest',
             'X-Forwarded-For': fakeResidencialIP,
             'X-Real-IP': fakeResidencialIP,
@@ -319,8 +198,7 @@ const addon = {
                     return result;
                 }
             } catch (e) {
-                const body = e.response?.data ? (typeof e.response.data === 'string' ? e.response.data.substring(0, 300) : JSON.stringify(e.response.data).substring(0, 300)) : '(sem corpo)';
-                      console.warn(`[AUTH SCAN] ${path} recusado (Status: ${e.response?.status || 'OFFLINE'}) Body: ${body}`);
+                console.warn(`[AUTH SCAN] ${path} recusado (Status: ${e.response?.status || 'OFFLINE'})`);
             }
         }
 
@@ -357,7 +235,6 @@ const addon = {
         console.error(`[AUTH FATAL] Nenhum caminho ou perfil funcionou para este MAC.`);
         return null;
     },
-    */
 
     async getManifest(configBase64) {
     console.log("[MANIFEST] Pedido de Manifest recebido.");
@@ -850,25 +727,11 @@ if (effectiveGenre && config.selectedCategories) {
         const sId = parts[2];
         const name = decodeURIComponent(parts[3] || "Stream");
         const lists = this.parseConfig(configBase64); const config = lists[lIdx];
-if (!config) return { streams: [] };
-const expectedSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
-if (sig && sig !== expectedSig) return { streams: [] };
+        if (!config) return { streams: [] };
+        const expectedSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
+        if (sig && sig !== expectedSig) return { streams: [] };
 
-        if (type === 'tv' && config?.type === 'stalker') {
-    await tryEndPreviousSession(config, sId, this);
-    const macKey = (config.mac || config.user || config.url || 'unknown').toUpperCase();
-    // Guarda channelId por agora; o streamDomain é preenchido mais tarde quando tivermos o URL
-    global.lastChannelByMac[macKey] = { channelId: sId, ts: Date.now(), streamDomain: null };
-        }
-/*
-// Fechar sessão anterior (se houver) para evitar sobreposição no portal
-if (type === 'tv' && config?.type === 'stalker') {
-    await tryEndPreviousSession(config, sId, this);
-    const macKey = (config.mac || config.user || config.url || 'unknown').toUpperCase();
-    global.lastChannelByMac[macKey] = { channelId: sId, ts: Date.now() };
-}
-*/
-const pUrl = `https://${host}/proxy/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(sId)}?type=${type}`;
+        const pUrl = `https://${host}/proxy/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(sId)}?type=${type}`;
         let streams = [];
         let directAdded = false;
 
@@ -906,31 +769,6 @@ const pUrl = `https://${host}/proxy/${encodeURIComponent(configBase64)}/${lIdx}/
                         realCmd = partsCmd[0];
                         sNum = partsCmd[1];
                     }
-
-                    console.log(`[STREAMS] Stalker - Extraindo link para cmd/id=${realCmd}, series=${sNum || 'N/A'}`);
-
-// Cache de link por canal (evita criar sessões duplicadas)
-const linkCacheKey = `${config.url}_${config.mac || ''}_${type}_${realCmd}_${sNum || ''}`;
-let cmdUrl = null;
-const cachedLink = global.streamLinkCache[linkCacheKey];
-if (cachedLink && Date.now() - cachedLink.ts < 30000) {
-    cmdUrl = cachedLink.url;
-    console.log(`[LINK CACHE] Reutilizado (${Date.now() - cachedLink.ts}ms) para ${realCmd}`);
-}
-
-if (!cmdUrl) {
-    cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
-    if (!cmdUrl || cmdUrl.trim() === "") {
-        console.log(`[STREAMS] Link não recebido. Forçando novo token...`);
-        auth = await engine.authenticate(config, config.proxy);
-        if (auth) cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
-    }
-    if (cmdUrl && typeof cmdUrl === 'string' && cmdUrl.trim() !== '') {
-        global.streamLinkCache[linkCacheKey] = { url: cmdUrl, ts: Date.now() };
-        console.log(`[LINK CACHE] Guardado para ${realCmd}`);
-    }
-} 
-                    /*
                     console.log(`[STREAMS] Stalker - Extraindo link para cmd/id=${realCmd}, series=${sNum || 'N/A'}`);
 
                     let cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
@@ -939,24 +777,13 @@ if (!cmdUrl) {
                         auth = await engine.authenticate(config, config.proxy);
                         if (auth) cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
                     }
-                    */
 
                     if (typeof cmdUrl === 'string' && cmdUrl.trim() !== "") {
-    console.log(`[STREAMS] Sucesso! URL original recebido: ${cmdUrl}`);
-
-    // 👇 GUARDAR O DOMÍNIO DO STREAM PARA O PRÓXIMO session_end
-    try {
-        const u = new URL(cmdUrl);
-        const macKey2 = (config.mac || config.user || config.url || 'unknown').toUpperCase();
-        if (global.lastChannelByMac[macKey2]) {
-            global.lastChannelByMac[macKey2].streamDomain = `${u.protocol}//${u.host}`;
-        }
-    } catch(e) { /* ignorar se URL inválido */ }
-
-    let cleanUrl = cmdUrl.replace(/^['"`]?(ffrt|ffmpeg|ffrt2|rtmp)['"`]?\s+/i, "").trim();
-    if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
-        cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
-    }
+                        console.log(`[STREAMS] Sucesso! URL original recebido: ${cmdUrl}`);
+                        let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
+                        if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
+                            cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
+                        }
                         if (cleanUrl.includes('://')) {
     if (config?.useDirect !== false) {
         const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
