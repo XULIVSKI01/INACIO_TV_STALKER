@@ -96,7 +96,7 @@ async function parseM3U(url, config) {
 };
 
 // ============================================================
-// TRACKER DE ÚLTIMO CANAL POR MAC (para session_end agressivo)
+// TRACKER DE ÚLTIMO CANAL POR MAC (session_end multi-domínio)
 // ============================================================
 if (!global.lastChannelByMac) global.lastChannelByMac = {};
 
@@ -117,44 +117,49 @@ async function tryEndPreviousSession(config, currentChannelId, addonRef) {
         const auth = await addonRef.authenticate(config);
         if (!auth) return false;
 
-        const hdrs = addonRef.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 2000 });
+        const hdrs = addonRef.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 3000 });
         const sn = auth.authData.sn;
         const tok = auth.token;
         const cmd = prev.channelId;
 
-        // Bater forte com várias ações até o portal confirmar
-        const endpoints = [
-            `${auth.api}type=itv&action=session_end&cmd=${encodeURIComponent(cmd)}&sn=${sn}&token=${tok}&JsHttpRequest=1-0`,
-            `${auth.api}type=itv&action=unlink&cmd=${encodeURIComponent(cmd)}&sn=${sn}&token=${tok}&JsHttpRequest=1-0`,
-            `${auth.api}type=itv&action=stop&cmd=${encodeURIComponent(cmd)}&sn=${sn}&token=${tok}&JsHttpRequest=1-0`,
-            `${auth.api}type=itv&action=unsubscribe&cmd=${encodeURIComponent(cmd)}&sn=${sn}&token=${tok}&JsHttpRequest=1-0`,
-            `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(cmd)}&sn=${sn}&token=${tok}&force_ch_link_check=1&JsHttpRequest=1-0`
-        ];
+        // Montar lista de bases onde enviar session_end:
+        // - portal (auth)
+        // - domínio do stream anterior (se diferente)
+        const bases = new Set();
+        bases.add(auth.api);
+        if (auth.apiAlt) bases.add(auth.apiAlt);
 
-        // Tentar até 3 rondas de 5 endpoints, com pausa curta entre rondas
-        let closed = false;
-        for (let ronda = 0; ronda < 3 && !closed; ronda++) {
-            for (const url of endpoints) {
-                try {
-                    const r = await axios.get(url, hdrs);
-                    const body = r.data?.js || r.data || '';
-                    // Se o portal devolver algo tipo "session closed" ou erro específico, paramos
-                    if (typeof body === 'string' && /closed|ended|ok/i.test(body)) {
-                        closed = true;
-                        break;
-                    }
-                    if (body && typeof body === 'object' && (body.error || body.msg)) {
-                        closed = true;
-                        break;
-                    }
-                } catch(e) { continue; }
-            }
-            if (!closed && ronda < 2) {
-                await new Promise(r => setTimeout(r, 300));
-            }
+        if (prev.streamDomain) {
+            try {
+                const u = new URL(prev.streamDomain);
+                const host = u.host;
+                bases.add(`http://${host}/portal.php?`);
+                bases.add(`http://${host}/server/load.php?`);
+                bases.add(`http://${host}/c/portal.php?`);
+            } catch(e) {}
         }
 
-        console.log(`[SESSION_END] Canal ${cmd} fechado (era ${age}ms antigo, ronda ${closed ? 'sucesso' : 'final'})`);
+        // Ações a disparar (todas, em paralelo, sem esperar resposta)
+        const actions = ['session_end', 'unlink', 'stop', 'unsubscribe'];
+
+        const promises = [];
+        for (const base of bases) {
+            for (const action of actions) {
+                const url = `${base}type=itv&action=${action}&cmd=${encodeURIComponent(cmd)}&sn=${sn}&token=${tok}&JsHttpRequest=1-0`;
+                promises.push(axios.get(url, hdrs).catch(() => {}));
+            }
+            // Também forçar com create_link + force_ch_link_check
+            const forceUrl = `${base}type=itv&action=create_link&cmd=${encodeURIComponent(cmd)}&sn=${sn}&token=${tok}&force_ch_link_check=1&JsHttpRequest=1-0`;
+            promises.push(axios.get(forceUrl, hdrs).catch(() => {}));
+        }
+
+        // Disparar tudo em paralelo e esperar no máximo 1.5s
+        await Promise.race([
+            Promise.all(promises),
+            new Promise(r => setTimeout(r, 1500))
+        ]);
+
+        console.log(`[SESSION_END] Canal ${cmd} fechado em ${bases.size} domínio(s), era ${age}ms antigo`);
     } catch(e) { /* ignorar */ }
 
     delete global.lastChannelByMac[macKey];
@@ -850,13 +855,10 @@ const expectedSig = crypto.createHash('md5').update(config.url).digest('hex').su
 if (sig && sig !== expectedSig) return { streams: [] };
 
         if (type === 'tv' && config?.type === 'stalker') {
-    const wasClosed = await tryEndPreviousSession(config, sId, this);
-    if (wasClosed) {
-        // Dar tempo ao portal para processar o fecho antes de pedir o próximo link
-        await new Promise(r => setTimeout(r, 500));
-    }
+    await tryEndPreviousSession(config, sId, this);
     const macKey = (config.mac || config.user || config.url || 'unknown').toUpperCase();
-    global.lastChannelByMac[macKey] = { channelId: sId, ts: Date.now() };
+    // Guarda channelId por agora; o streamDomain é preenchido mais tarde quando tivermos o URL
+    global.lastChannelByMac[macKey] = { channelId: sId, ts: Date.now(), streamDomain: null };
         }
 /*
 // Fechar sessão anterior (se houver) para evitar sobreposição no portal
@@ -940,11 +942,21 @@ if (!cmdUrl) {
                     */
 
                     if (typeof cmdUrl === 'string' && cmdUrl.trim() !== "") {
-                        console.log(`[STREAMS] Sucesso! URL original recebido: ${cmdUrl}`);
-                        let cleanUrl = cmdUrl.replace(/^['"`]?(ffrt|ffmpeg|ffrt2|rtmp)['"`]?\s+/i, "").trim();
-                        if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
-                            cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
-                        }
+    console.log(`[STREAMS] Sucesso! URL original recebido: ${cmdUrl}`);
+
+    // 👇 GUARDAR O DOMÍNIO DO STREAM PARA O PRÓXIMO session_end
+    try {
+        const u = new URL(cmdUrl);
+        const macKey2 = (config.mac || config.user || config.url || 'unknown').toUpperCase();
+        if (global.lastChannelByMac[macKey2]) {
+            global.lastChannelByMac[macKey2].streamDomain = `${u.protocol}//${u.host}`;
+        }
+    } catch(e) { /* ignorar se URL inválido */ }
+
+    let cleanUrl = cmdUrl.replace(/^['"`]?(ffrt|ffmpeg|ffrt2|rtmp)['"`]?\s+/i, "").trim();
+    if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
+        cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
+    }
                         if (cleanUrl.includes('://')) {
     if (config?.useDirect !== false) {
         const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
