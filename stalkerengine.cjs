@@ -165,9 +165,31 @@ function extractUrl(jsData) {
     if (!url && typeof jsData === 'object') {
         url = Object.values(jsData).find(v => typeof v === 'string' && (v.startsWith('http') || v.includes('://')));
     }
-    return url ? url.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "") : null;
+    if (!url) return null;
+
+    // 1. Remover prefixos ffmpeg/ffrt/etc
+    url = url.trim().replace(/^['"`]?(ffrt|ffmpeg|ffrt2|rtmp)['"`]?\s+/i, "").trim();
+
+    // 2. Remover TODOS os whitespace/TAB/quebras no URL (crítico!)
+    url = url.replace(/[\s\t\r\n]+/g, "");
+
+    // 3. Se o URL tiver path duplicado (mag.ottcst.com/.../line.crystalott.net/...), tentar limpar
+    // Detetar padrão: host/.../host2/...
+    // Deixamos o portal decidir — só limpamos whitespace. O resto é problema do portal.
+
+    return url;
 }
 
+/*
+function extractUrl(jsData) {
+    if (!jsData) return null;
+    let url = jsData?.cmd || jsData?.url || (typeof jsData === 'string' ? jsData : null);
+    if (!url && typeof jsData === 'object') {
+        url = Object.values(jsData).find(v => typeof v === 'string' && (v.startsWith('http') || v.includes('://')));
+    }
+    return url ? url.trim().replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "") : null;
+}
+*/
 // ============================================================
 // 3. RELAY FFMPEG (unificado, com proxy)
 // ============================================================
