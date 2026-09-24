@@ -95,6 +95,8 @@ async function parseM3U(url, config) {
     };
 };
 
+if (!global.streamLinkCache) global.streamLinkCache = {};
+
 const addon = {
     getAxiosOpts(config, extraOpts = {}) {
         let opts = { ...extraOpts };
@@ -717,12 +719,25 @@ if (effectiveGenre && config.selectedCategories) {
                     }
                     console.log(`[STREAMS] Stalker - Extraindo link para cmd/id=${realCmd}, series=${sNum || 'N/A'}`);
 
-                    let cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
-                    if (!cmdUrl || cmdUrl.trim() === "") {
-                        console.log(`[STREAMS] Link não recebido. Forçando novo token...`);
-                        auth = await engine.authenticate(config, config.proxy);
-                        if (auth) cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
-                    }
+                    // Cache de link por canal (evita pedidos duplicados ao portal)
+const linkCacheKey = `${config.url}_${config.mac || ''}_${type}_${realCmd}_${sNum || ''}`;
+let cmdUrl = null;
+const cachedLink = global.streamLinkCache && global.streamLinkCache[linkCacheKey];
+if (cachedLink && Date.now() - cachedLink.ts < 60000) {
+    cmdUrl = cachedLink.url;
+    console.log(`[LINK CACHE] Reutilizado para ${realCmd}`);
+} else {
+    cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
+    if (!cmdUrl || cmdUrl.trim() === "") {
+        console.log(`[STREAMS] Link não recebido. Forçando novo token...`);
+        auth = await engine.authenticate(config, config.proxy);
+        if (auth) cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
+    }
+    if (cmdUrl && typeof cmdUrl === 'string' && cmdUrl.trim() !== '') {
+        if (!global.streamLinkCache) global.streamLinkCache = {};
+        global.streamLinkCache[linkCacheKey] = { url: cmdUrl, ts: Date.now() };
+    }
+}
 
                     if (typeof cmdUrl === 'string' && cmdUrl.trim() !== "") {
                         console.log(`[STREAMS] Sucesso! URL original recebido: ${cmdUrl}`);
