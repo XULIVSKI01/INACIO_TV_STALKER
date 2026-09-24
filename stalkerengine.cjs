@@ -167,19 +167,33 @@ function extractUrl(jsData) {
     }
     if (!url) return null;
 
-    // 1. Remover prefixos ffmpeg/ffrt/etc
+    // 1. Remover prefixos ffmpeg/ffrt/etc e espaços/TAB
     url = url.trim().replace(/^['"`]?(ffrt|ffmpeg|ffrt2|rtmp)['"`]?\s+/i, "").trim();
-
-    // 2. Remover TODOS os whitespace/TAB/quebras no URL (crítico!)
     url = url.replace(/[\s\t\r\n]+/g, "");
 
-    // 3. Se o URL tiver path duplicado (mag.ottcst.com/.../line.crystalott.net/...), tentar limpar
-    // Detetar padrão: host/.../host2/...
-    // Deixamos o portal decidir — só limpamos whitespace. O resto é problema do portal.
+    // 2. Detetar e corrigir URL com domínio duplicado a meio do path
+    try {
+        const u = new URL(url);
+        const parts = u.pathname.split('/').filter(Boolean);
+        const domainLikeRe = /^[a-z0-9-]+\.(net|com|org|tv|io|xyz|top|sbs|info|live|online|site|cc|me|pt|br|es|fr|it|de|uk|nl|be|ch|at|pl|ru|cn)$/i;
+
+        for (let i = 1; i < parts.length - 1; i++) {
+            if (domainLikeRe.test(parts[i])) {
+                const before = parts.slice(0, i);
+                const after = parts.slice(i + 1);
+                // Se o segmento `after` contém o primeiro segmento do `before`, é duplicação
+                if (before.length > 0 && after.includes(before[0])) {
+                    const lastPart = parts[parts.length - 1];
+                    const fixed = `${u.protocol}//${u.host}/${before.join('/')}/${lastPart}${u.search}`;
+                    console.log(`[URL FIX] Corrigido: ${fixed}`);
+                    return fixed;
+                }
+            }
+        }
+    } catch(e) { /* não é URL válido, devolve como está */ }
 
     return url;
 }
-
 /*
 function extractUrl(jsData) {
     if (!jsData) return null;
