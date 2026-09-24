@@ -492,7 +492,7 @@ if (effectiveGenre && config.selectedCategories) {
     }
 
     metas = (cached.data || []).slice(skip, skip + 100).map(m => {
-        let targetId = m.id || m.cmd;
+        let targetId = m.cmd || m.id;
         return {
             id: `xlv:${lIdx}_${listSig}:${encodeURIComponent(targetId)}:${encodeURIComponent(m.name || m.title)}:${encodeURIComponent(m.logo || m.screenshot_uri || '')}`,
             name: m.name || m.title,
