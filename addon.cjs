@@ -719,9 +719,12 @@ if (effectiveGenre && config.selectedCategories) {
                     }
                     console.log(`[STREAMS] Stalker - Extraindo link para cmd/id=${realCmd}, series=${sNum || 'N/A'}`);
 
-                    // Cache de link por canal (evita pedidos duplicados ao portal)
-const linkCacheKey = `${config.url}_${config.mac || ''}_${type}_${realCmd}_${sNum || ''}`;
-let cmdUrl = null;
+                    const linkCacheKey = `${config.url}_${config.mac || ''}_${type}_${realCmd}_${sNum || ''}`;
+                      let cmdUrl = null;
+
+// DEBUG 1: mostrar o estado da cache ANTES de decidir
+console.log(`[LINK CACHE DEBUG] key=${linkCacheKey.substring(0,80)} hasCache=${!!global.streamLinkCache} hasKey=${!!(global.streamLinkCache && global.streamLinkCache[linkCacheKey])}`);
+
 const cachedLink = global.streamLinkCache && global.streamLinkCache[linkCacheKey];
 if (cachedLink && Date.now() - cachedLink.ts < 60000) {
     cmdUrl = cachedLink.url;
@@ -736,6 +739,9 @@ if (cachedLink && Date.now() - cachedLink.ts < 60000) {
     if (cmdUrl && typeof cmdUrl === 'string' && cmdUrl.trim() !== '') {
         if (!global.streamLinkCache) global.streamLinkCache = {};
         global.streamLinkCache[linkCacheKey] = { url: cmdUrl, ts: Date.now() };
+
+        // DEBUG 2: confirmar que guardou
+        console.log(`[LINK CACHE DEBUG] Guardado com chave: ${linkCacheKey.substring(0,80)}`);
     }
 }
 
