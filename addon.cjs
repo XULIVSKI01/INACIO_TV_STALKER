@@ -97,6 +97,46 @@ async function parseM3U(url, config) {
 
 if (!global.streamLinkCache) global.streamLinkCache = {};
 
+// ============================================================
+// SESSÃO ATIVA GLOBAL (para fechar antes de abrir nova)
+// ============================================================
+if (!global.lastActiveSession) global.lastActiveSession = null;
+
+async function closeLastSession(addonRef) {
+    const prev = global.lastActiveSession;
+    if (!prev) return;
+
+    const age = Date.now() - prev.ts;
+
+    // Se passou muito tempo (5 min), assume expirado — limpa e sai
+    if (age > 300000) {
+        global.lastActiveSession = null;
+        return;
+    }
+
+    try {
+        const hdrs = addonRef.getAxiosOpts(prev.config, { headers: prev.headers, timeout: 2000 });
+        const cmd = prev.channelId;
+
+        const endpoints = [
+            `${prev.api}type=itv&action=session_end&cmd=${encodeURIComponent(cmd)}&sn=${prev.sn}&token=${prev.token}&JsHttpRequest=1-0`,
+            `${prev.api}type=itv&action=unlink&cmd=${encodeURIComponent(cmd)}&sn=${prev.sn}&token=${prev.token}&JsHttpRequest=1-0`,
+            `${prev.api}type=itv&action=stop&cmd=${encodeURIComponent(cmd)}&sn=${prev.sn}&token=${prev.token}&JsHttpRequest=1-0`,
+            `${prev.api}type=itv&action=unsubscribe&cmd=${encodeURIComponent(cmd)}&sn=${prev.sn}&token=${prev.token}&JsHttpRequest=1-0`,
+            `${prev.api}type=stb&action=logout&sn=${prev.sn}&token=${prev.token}&JsHttpRequest=1-0`
+        ];
+
+        await Promise.race([
+            Promise.all(endpoints.map(u => axios.get(u, hdrs).catch(() => {}))),
+            new Promise(r => setTimeout(r, 2000))
+        ]);
+
+        console.log(`[SESSION_END] Fechada sessão anterior: portal=${prev.config.url} canal=${cmd} (${age}ms atrás)`);
+    } catch(e) { /* ignorar */ }
+
+    global.lastActiveSession = null;
+}
+
 const addon = {
     getAxiosOpts(config, extraOpts = {}) {
         let opts = { ...extraOpts };
@@ -724,6 +764,31 @@ if (effectiveGenre && config.selectedCategories) {
 
 // DEBUG 1: mostrar o estado da cache ANTES de decidir
 console.log(`[LINK CACHE DEBUG] key=${linkCacheKey.substring(0,80)} hasCache=${!!global.streamLinkCache} hasKey=${!!(global.streamLinkCache && global.streamLinkCache[linkCacheKey])}`);
+
+ // ===== FECHAR SESSÃO ANTERIOR (se aplicável) =====
+if (type === 'tv' && config?.type === 'stalker' && auth) {
+    const prev = global.lastActiveSession;
+    const isSameBurst = prev
+        && prev.config.url === config.url
+        && prev.channelId === realCmd
+        && (Date.now() - prev.ts) < 3000;
+
+    // Se NÃO é a rajada paralela do mesmo clique → fecha a anterior
+    if (!isSameBurst) {
+        await closeLastSession(this);
+    }
+
+    // Registar a nova sessão ativa
+    global.lastActiveSession = {
+        config,
+        channelId: realCmd,
+        ts: Date.now(),
+        api: auth.api,
+        headers: auth.authData.headers,
+        token: auth.token,
+        sn: auth.authData.sn
+    };
+}                   
 
 const cachedLink = global.streamLinkCache && global.streamLinkCache[linkCacheKey];
 if (cachedLink && Date.now() - cachedLink.ts < 60000) {
