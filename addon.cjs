@@ -752,8 +752,6 @@ const addon = {
                         // ===== WARM-UP: 1ª chamada arma, 2ª devolve URL a funcionar =====
                         console.log(`[WARMUP] A aquecer sessão para ${realCmd}...`);
                         const firstUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
-
-                        const firstUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
 if (firstUrl && typeof firstUrl === 'string' && firstUrl.trim() !== '') {
     await new Promise(r => setTimeout(r, 2500));
     const secondUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
@@ -763,10 +761,10 @@ if (firstUrl && typeof firstUrl === 'string' && firstUrl.trim() !== '') {
              (secondUrl && secondUrl.trim() !== '') ? secondUrl : firstUrl;
     console.log(`[WARMUP] ✅ Sessão aquecida (3 chamadas) para ${realCmd}`);
 } else {
-                            console.log(`[STREAMS] 1ª tentativa falhou. Forçando novo token...`);
-                            auth = await engine.authenticate(config, config.proxy);
-                            if (auth) cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
-                        }
+    console.log(`[STREAMS] 1ª tentativa falhou. Forçando novo token...`);
+    auth = await engine.authenticate(config, config.proxy);
+    if (auth) cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
+}
 
                         if (cmdUrl && typeof cmdUrl === 'string' && cmdUrl.trim() !== '') {
                             if (!global.streamLinkCache) global.streamLinkCache = {};
