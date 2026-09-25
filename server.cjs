@@ -7,6 +7,19 @@ const { spawn } = require('child_process');
 const engine = require("./stalkerengine.cjs");
 const addon = require("./addon.cjs");
 
+// Guarda as últimas configs vistas (para keep-alive)
+if (!global.recentConfigs) global.recentConfigs = new Set();
+const MAX_RECENT_CONFIGS = 5;
+
+function rememberConfig(configB64) {
+    if (!configB64) return;
+    global.recentConfigs.add(configB64);
+    if (global.recentConfigs.size > MAX_RECENT_CONFIGS) {
+        const first = global.recentConfigs.values().next().value;
+        global.recentConfigs.delete(first);
+    }
+}
+
 const PORT = process.env.PORT || 7860;
 const app = express();
 
@@ -36,9 +49,23 @@ setInterval(() => {
     }
 }, 30000);
 
-app.get("/ping", (req, res) => {
-    console.log(`[PING] ${new Date().toISOString()}`);
+app.get("/ping", async (req, res) => {
+    console.log(`[PING] ${new Date().toISOString()} — keep-alive de ${global.recentConfigs ? global.recentConfigs.size : 0} configs`);
     res.status(200).send("pong");
+
+    // Keep-alive leve em background (SÓ handshake, sem create_link)
+    (async () => {
+        if (!global.recentConfigs) return;
+        for (const cfgB64 of global.recentConfigs) {
+            try {
+                const lists = addon.parseConfig(cfgB64);
+                for (const list of lists) {
+                    if (list.type !== 'stalker') continue;
+                    await engine.authenticate(list, list.proxy).catch(() => {});
+                }
+            } catch (e) { /* ignorar */ }
+        }
+    })();
 });
 
 // Página de Configuração (inalterada)
@@ -410,8 +437,12 @@ function updateMasterCheckbox(groupId) {
 });
 
 // Rotas do Stremio
-app.get("/:config/manifest.json", async (req, res) => res.json(await addon.getManifest(req.params.config)));
+app.get("/:config/manifest.json", async (req, res) => {
+    rememberConfig(req.params.config);
+    res.json(await addon.getManifest(req.params.config));
+});
 app.get("/:config/catalog/:type/:id/:extra?.json", async (req, res) => {
+    rememberConfig(req.params.config);
     const { config, type, id, extra } = req.params;
     let extraObj = {};
     if (extra) {
@@ -424,12 +455,13 @@ app.get("/:config/catalog/:type/:id/:extra?.json", async (req, res) => {
 });
 app.get("/:config/meta/:type/:id.json", async (req, res) => res.json(await addon.getMeta(req.params.type, req.params.id, req.params.config)));
 app.get("/:config/stream/:type/:id.json", async (req, res) => {
+    rememberConfig(req.params.config);
     const host = req.headers.host;
     res.json(await addon.getStreams(req.params.type, req.params.id, req.params.config, host));
 });
 
 // ROTA PRINCIPAL DO PROXY
-const sessions = new engine.SessionManager();
+//const sessions = new engine.SessionManager();
 
 app.get("/proxy/:config/:listIdx/:channelId", async (req, res) => {
     const { config, listIdx, channelId } = req.params;
