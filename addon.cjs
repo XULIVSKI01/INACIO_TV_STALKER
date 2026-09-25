@@ -4,7 +4,7 @@ const crypto = require("crypto");
 const https = require('https'); 
 const engine = require("./stalkerengine.cjs");
 const { SocksProxyAgent } = require('socks-proxy-agent');
-const authCache = new Map();
+//const authCache = new Map();
 const catalogCache = {};
 const CACHE_TTL = 1000 * 60 * 60 * 4;
 
@@ -45,7 +45,7 @@ async function parseM3U(url, config) {
     }
     return channels;
 }
-
+/*
  const getStalkerAuth = function(config, token, sessionCookies = "") {
     const mac = (config.mac || "00:1A:79:00:00:00").toUpperCase();
     const seed = crypto.createHash('md5').update(mac || 'vazio').digest('hex').toUpperCase();
@@ -83,9 +83,9 @@ async function parseM3U(url, config) {
             "Cookie": cookie,
             "Authorization": token ? `Bearer ${token}` : undefined,
             "Referer": baseUrl + "/c/",
-            "Origin": baseUrl,
-            "Accept": "*/*",
-            "Accept-Language": "en-US,en;q=0.9", 
+            "Origin": baseUrl,*/
+           // "Accept": "*/*",
+           /* "Accept-Language": "en-US,en;q=0.9", 
             "Accept-Encoding": "gzip, deflate",  
             "X-Requested-With": "XMLHttpRequest",
             "Pragma": "no-cache",
@@ -94,7 +94,7 @@ async function parseM3U(url, config) {
         }
     };
 };
-
+*/
 if (!global.streamLinkCache) global.streamLinkCache = {};
 
 // ============================================================
@@ -706,7 +706,7 @@ if (effectiveGenre && config.selectedCategories) {
 
     async getStreams(type, id, configBase64, host) {
         console.log(`[STREAMS] Pedido de stream: type=${type}, id=${id}`);
-        if (type === "series") await new Promise(resolve => setTimeout(resolve, 2500));
+        if (type === "series") await new Promise(resolve => setTimeout(resolve, 800));
 
         const parts = id.split(":"); 
         const lIdxParts = parts[1].split("_");
@@ -761,25 +761,27 @@ if (effectiveGenre && config.selectedCategories) {
 
                     // ===== SLOT STATE: 🔴 ocupado / 🟢 livre =====
 if (type === 'tv' && config?.type === 'stalker') {
+    if (!global.lastTvHandout) global.lastTvHandout = {};
     const slotKey = `${config.url}_${sId}`;
-    const active = global.activeTvStreams && global.activeTvStreams[slotKey];
-    const occupied = !!(active && active.broadcaster && !active.broadcaster.destroyed);
+    const last = global.lastTvHandout[slotKey] || 0;
+    const age = Date.now() - last;
+    const COOLDOWN = 25000;
 
-    console.log(`[SLOT] ${occupied ? '🔴 Ocupado' : '🟢 Livre'} → ${slotKey.substring(0, 80)}`);
-
-    if (occupied) {
+    if (last > 0 && age > 3000 && age < COOLDOWN) {
+        const waitSec = Math.ceil((COOLDOWN - age) / 1000);
+        console.log(`[SLOT] 🔴 Ocupado — ${waitSec}s restantes`);
         return {
             streams: [{
                 name: '🔴 Indisponível',
-                title:
-                    `⏳ O canal ainda está ocupado no portal.\n\n` +
-                    `Sai desta lista, aguarda ~25 segundos e volta a abrir.\n` +
-                    `O ícone passará a 🟢 Disponível quando estiver livre.`,
+                title: `⏳ Aguarda ${waitSec}s antes de re-entrar neste canal.\n\nO portal ainda tem a sessão anterior aberta.`,
                 url: '',
                 behaviorHints: { notWebReady: true }
             }]
         };
     }
+
+    global.lastTvHandout[slotKey] = Date.now();
+    console.log(`[SLOT] 🟢 Livre (age=${age}ms)`);
 }
 
                     const linkCacheKey = `${config.url}_${config.mac || ''}_${type}_${realCmd}_${sNum || ''}`;
@@ -788,20 +790,18 @@ if (type === 'tv' && config?.type === 'stalker') {
 // DEBUG 1: mostrar o estado da cache ANTES de decidir
 console.log(`[LINK CACHE DEBUG] key=${linkCacheKey.substring(0,80)} hasCache=${!!global.streamLinkCache} hasKey=${!!(global.streamLinkCache && global.streamLinkCache[linkCacheKey])}`);
 
- // ===== FECHAR SESSÃO ANTERIOR (se aplicável) =====
+// ===== FECHAR SESSÃO ANTERIOR (só se for OUTRO canal) =====
 if (type === 'tv' && config?.type === 'stalker' && auth) {
     const prev = global.lastActiveSession;
-    const isSameBurst = prev
+    const isSameChannel = prev
         && prev.config.url === config.url
-        && prev.channelId === realCmd
-        && (Date.now() - prev.ts) < 3000;
+        && prev.channelId === realCmd;
 
-    // Se NÃO é a rajada paralela do mesmo clique → fecha a anterior
-    if (!isSameBurst) {
+    // Só fecha se for OUTRO canal (retries do mesmo canal NÃO fecham)
+    if (prev && !isSameChannel) {
         await closeLastSession(this);
     }
 
-    // Registar a nova sessão ativa
     global.lastActiveSession = {
         config,
         channelId: realCmd,
@@ -818,15 +818,26 @@ if (cachedLink && Date.now() - cachedLink.ts < 60000) {
     cmdUrl = cachedLink.url;
     console.log(`[LINK CACHE] Reutilizado para ${realCmd}`);
 } else {
-    cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
-    if (!cmdUrl || cmdUrl.trim() === "") {
-        console.log(`[STREAMS] Link não recebido. Forçando novo token...`);
+    // ===== WARM-UP: 1ª chamada arma, 2ª devolve URL a funcionar =====
+    console.log(`[WARMUP] A aquecer sessão para ${realCmd}...`);
+    const firstUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
+
+    if (firstUrl && typeof firstUrl === 'string' && firstUrl.trim() !== '') {
+        await new Promise(r => setTimeout(r, 800));
+        const secondUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
+        cmdUrl = (secondUrl && secondUrl.trim() !== '') ? secondUrl : firstUrl;
+        console.log(`[WARMUP] ✅ Sessão aquecida para ${realCmd}`);
+    } else {
+        console.log(`[STREAMS] 1ª tentativa falhou. Forçando novo token...`);
         auth = await engine.authenticate(config, config.proxy);
         if (auth) cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
     }
+
     if (cmdUrl && typeof cmdUrl === 'string' && cmdUrl.trim() !== '') {
         if (!global.streamLinkCache) global.streamLinkCache = {};
         global.streamLinkCache[linkCacheKey] = { url: cmdUrl, ts: Date.now() };
+    }
+}
 
         // DEBUG 2: confirmar que guardou
         console.log(`[LINK CACHE DEBUG] Guardado com chave: ${linkCacheKey.substring(0,80)}`);
@@ -842,7 +853,7 @@ if (cachedLink && Date.now() - cachedLink.ts < 60000) {
                         if (cleanUrl.includes('://')) {
     if (config?.useDirect !== false) {
         const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-        streams.push({ name: name, url: cleanUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+        streams.push({ name: '🟢 ' + name, url: cleanUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
         directAdded = true;
     }
 }
@@ -859,7 +870,7 @@ if (cachedLink && Date.now() - cachedLink.ts < 60000) {
         let fallbackUrl = decodeURIComponent(sId).split('|||')[0].split('|')[0].replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
         if (fallbackUrl.startsWith('http')) {
             const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-            streams.push({ name: name, url: fallbackUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+            streams.push({ name: '🟢 ' + name, url: fallbackUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
         }
      }
   }
@@ -871,7 +882,7 @@ if (useProxy) {
     const hint = config?.streamHint || '';
     const proxyTitle = (hint ? hint + ' ' : '') + 
                        (type === 'movie' ? '🎬 Proxy Estável' : (type === 'series' ? `🍿 Proxy Estável - ${name}` : '🔄 Proxy Estável'));
-    streams.push({ name: name, url: pUrl, title: proxyTitle, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+    streams.push({ name: '🟢 ' + name, url: pUrl, title: proxyTitle, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
 }
 return { streams };
     }
