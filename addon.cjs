@@ -759,6 +759,33 @@ if (effectiveGenre && config.selectedCategories) {
                     }
                     console.log(`[STREAMS] Stalker - Extraindo link para cmd/id=${realCmd}, series=${sNum || 'N/A'}`);
 
+                    // ===== COOLDOWN: re-entrada rápida no mesmo canal =====
+if (type === 'tv' && config?.type === 'stalker') {
+    const prevC = global.lastActiveSession;
+    if (prevC && prevC.config.url === config.url && prevC.channelId === realCmd) {
+        const ageMs = Date.now() - prevC.ts;
+        const COOLDOWN_MS = 15000;
+
+        if (ageMs > 3000 && ageMs < COOLDOWN_MS) {
+            const waitSec = Math.ceil((COOLDOWN_MS - ageMs) / 1000);
+            console.log(`[COOLDOWN] 🔴 Re-entrada rápida — ${waitSec}s restantes`);
+
+            return {
+                streams: [{
+                    name: '🔴 Indisponível',
+                    title:
+                        `⏳ Aguarda ${waitSec}s antes de re-entrar neste canal\n\n` +
+                        `O portal ainda tem a sessão anterior aberta.\n` +
+                        `Sai desta lista, espera ${waitSec} segundos e volta a abrir — ` +
+                        `o ícone passará a 🟢 Disponível.`,
+                    url: '',
+                    behaviorHints: { notWebReady: true }
+                }]
+            };
+        }
+    }
+}
+
                     const linkCacheKey = `${config.url}_${config.mac || ''}_${type}_${realCmd}_${sNum || ''}`;
                       let cmdUrl = null;
 
@@ -819,7 +846,7 @@ if (cachedLink && Date.now() - cachedLink.ts < 60000) {
                         if (cleanUrl.includes('://')) {
     if (config?.useDirect !== false) {
         const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-        streams.push({ name: name, url: cleanUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+        streams.push({ name:'🟢 ' + name, url: cleanUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
         directAdded = true;
     }
 }
@@ -836,7 +863,7 @@ if (cachedLink && Date.now() - cachedLink.ts < 60000) {
         let fallbackUrl = decodeURIComponent(sId).split('|||')[0].split('|')[0].replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
         if (fallbackUrl.startsWith('http')) {
             const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-            streams.push({ name: name, url: fallbackUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+            streams.push({ name:'🟢 ' + name, url: fallbackUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
         }
      }
   }
@@ -848,7 +875,7 @@ if (useProxy) {
     const hint = config?.streamHint || '';
     const proxyTitle = (hint ? hint + ' ' : '') + 
                        (type === 'movie' ? '🎬 Proxy Estável' : (type === 'series' ? `🍿 Proxy Estável - ${name}` : '🔄 Proxy Estável'));
-    streams.push({ name: name, url: pUrl, title: proxyTitle, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+    streams.push({ name:'🟢 ' +  name, url: pUrl, title: proxyTitle, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
 }
 return { streams };
     }
