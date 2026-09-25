@@ -759,30 +759,26 @@ if (effectiveGenre && config.selectedCategories) {
                     }
                     console.log(`[STREAMS] Stalker - Extraindo link para cmd/id=${realCmd}, series=${sNum || 'N/A'}`);
 
-                    // ===== COOLDOWN: re-entrada rápida no mesmo canal =====
+                    // ===== SLOT STATE: 🔴 ocupado / 🟢 livre =====
 if (type === 'tv' && config?.type === 'stalker') {
-    const prevC = global.lastActiveSession;
-    if (prevC && prevC.config.url === config.url && prevC.channelId === realCmd) {
-        const ageMs = Date.now() - prevC.ts;
-        const COOLDOWN_MS = 15000;
+    const slotKey = `${config.url}_${sId}`;
+    const active = global.activeTvStreams && global.activeTvStreams[slotKey];
+    const occupied = !!(active && active.broadcaster && !active.broadcaster.destroyed);
 
-        if (ageMs > 3000 && ageMs < COOLDOWN_MS) {
-            const waitSec = Math.ceil((COOLDOWN_MS - ageMs) / 1000);
-            console.log(`[COOLDOWN] 🔴 Re-entrada rápida — ${waitSec}s restantes`);
+    console.log(`[SLOT] ${occupied ? '🔴 Ocupado' : '🟢 Livre'} → ${slotKey.substring(0, 80)}`);
 
-            return {
-                streams: [{
-                    name: '🔴 Indisponível',
-                    title:
-                        `⏳ Aguarda ${waitSec}s antes de re-entrar neste canal\n\n` +
-                        `O portal ainda tem a sessão anterior aberta.\n` +
-                        `Sai desta lista, espera ${waitSec} segundos e volta a abrir — ` +
-                        `o ícone passará a 🟢 Disponível.`,
-                    url: '',
-                    behaviorHints: { notWebReady: true }
-                }]
-            };
-        }
+    if (occupied) {
+        return {
+            streams: [{
+                name: '🔴 Indisponível',
+                title:
+                    `⏳ O canal ainda está ocupado no portal.\n\n` +
+                    `Sai desta lista, aguarda ~25 segundos e volta a abrir.\n` +
+                    `O ícone passará a 🟢 Disponível quando estiver livre.`,
+                url: '',
+                behaviorHints: { notWebReady: true }
+            }]
+        };
     }
 }
 
@@ -846,7 +842,7 @@ if (cachedLink && Date.now() - cachedLink.ts < 60000) {
                         if (cleanUrl.includes('://')) {
     if (config?.useDirect !== false) {
         const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-        streams.push({ name:'🟢 ' + name, url: cleanUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+        streams.push({ name: name, url: cleanUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
         directAdded = true;
     }
 }
@@ -863,7 +859,7 @@ if (cachedLink && Date.now() - cachedLink.ts < 60000) {
         let fallbackUrl = decodeURIComponent(sId).split('|||')[0].split('|')[0].replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
         if (fallbackUrl.startsWith('http')) {
             const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-            streams.push({ name:'🟢 ' + name, url: fallbackUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+            streams.push({ name: name, url: fallbackUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
         }
      }
   }
@@ -875,7 +871,7 @@ if (useProxy) {
     const hint = config?.streamHint || '';
     const proxyTitle = (hint ? hint + ' ' : '') + 
                        (type === 'movie' ? '🎬 Proxy Estável' : (type === 'series' ? `🍿 Proxy Estável - ${name}` : '🔄 Proxy Estável'));
-    streams.push({ name:'🟢 ' +  name, url: pUrl, title: proxyTitle, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+    streams.push({ name: name, url: pUrl, title: proxyTitle, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
 }
 return { streams };
     }
