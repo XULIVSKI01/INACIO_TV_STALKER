@@ -49,23 +49,9 @@ setInterval(() => {
     }
 }, 30000);
 
-app.get("/ping", async (req, res) => {
-    console.log(`[PING] ${new Date().toISOString()} — keep-alive de ${global.recentConfigs ? global.recentConfigs.size : 0} configs`);
+app.get("/ping", (req, res) => {
+    console.log(`[PING] ${new Date().toISOString()}`);
     res.status(200).send("pong");
-
-    // Keep-alive leve em background (SÓ handshake, sem create_link)
-    (async () => {
-        if (!global.recentConfigs) return;
-        for (const cfgB64 of global.recentConfigs) {
-            try {
-                const lists = addon.parseConfig(cfgB64);
-                for (const list of lists) {
-                    if (list.type !== 'stalker') continue;
-                    await engine.authenticate(list, list.proxy).catch(() => {});
-                }
-            } catch (e) { /* ignorar */ }
-        }
-    })();
 });
 
 // Página de Configuração (inalterada)
