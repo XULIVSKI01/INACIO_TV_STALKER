@@ -916,7 +916,7 @@ const execStream = async (urlToPlay, isRetry = false) => {
                             cached.broadcaster.destroy();
                             delete global.activeTvStreams[streamKey];
                         }
-                    }, 10 * 60 * 1000);
+                    }, 25 * 1000);
                 }
             }
         });
