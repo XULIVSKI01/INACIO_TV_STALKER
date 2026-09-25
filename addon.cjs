@@ -753,12 +753,16 @@ const addon = {
                         console.log(`[WARMUP] A aquecer sessão para ${realCmd}...`);
                         const firstUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
 
-                        if (firstUrl && typeof firstUrl === 'string' && firstUrl.trim() !== '') {
-                            await new Promise(r => setTimeout(r, 800));
-                            const secondUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
-                            cmdUrl = (secondUrl && secondUrl.trim() !== '') ? secondUrl : firstUrl;
-                            console.log(`[WARMUP] ✅ Sessão aquecida para ${realCmd}`);
-                        } else {
+                        const firstUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
+if (firstUrl && typeof firstUrl === 'string' && firstUrl.trim() !== '') {
+    await new Promise(r => setTimeout(r, 2500));
+    const secondUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
+    await new Promise(r => setTimeout(r, 800));
+    const thirdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
+    cmdUrl = (thirdUrl && thirdUrl.trim() !== '') ? thirdUrl :
+             (secondUrl && secondUrl.trim() !== '') ? secondUrl : firstUrl;
+    console.log(`[WARMUP] ✅ Sessão aquecida (3 chamadas) para ${realCmd}`);
+} else {
                             console.log(`[STREAMS] 1ª tentativa falhou. Forçando novo token...`);
                             auth = await engine.authenticate(config, config.proxy);
                             if (auth) cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
