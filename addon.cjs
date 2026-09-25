@@ -702,7 +702,7 @@ const addon = {
                         const age = Date.now() - last;
                         const COOLDOWN = 25000;
 
-                        if (last > 0 && age > 3000 && age < COOLDOWN) {
+                        if (last > 0 && age > 8000 && age < COOLDOWN) {
                             const waitSec = Math.ceil((COOLDOWN - age) / 1000);
                             console.log(`[SLOT] 🔴 Ocupado — ${waitSec}s restantes`);
                             return {
@@ -745,30 +745,22 @@ const addon = {
                     }
 
                     const cachedLink = global.streamLinkCache && global.streamLinkCache[linkCacheKey];
-                    if (cachedLink && Date.now() - cachedLink.ts < 60000) {
+                    if (cachedLink && Date.now() - cachedLink.ts < 25000) {
                         cmdUrl = cachedLink.url;
                         console.log(`[LINK CACHE] Reutilizado para ${realCmd}`);
                     } else {
-                        // ===== WARM-UP: 1ª chamada arma, 2ª devolve URL a funcionar =====
-                        console.log(`[WARMUP] A aquecer sessão para ${realCmd}...`);
-                        const firstUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
-if (firstUrl && typeof firstUrl === 'string' && firstUrl.trim() !== '') {
-    await new Promise(r => setTimeout(r, 2500));
-    const secondUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
-    await new Promise(r => setTimeout(r, 800));
-    const thirdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
-    cmdUrl = (thirdUrl && thirdUrl.trim() !== '') ? thirdUrl :
-             (secondUrl && secondUrl.trim() !== '') ? secondUrl : firstUrl;
-    console.log(`[WARMUP] ✅ Sessão aquecida (3 chamadas) para ${realCmd}`);
-} else {
-    console.log(`[STREAMS] 1ª tentativa falhou. Forçando novo token...`);
-    auth = await engine.authenticate(config, config.proxy);
-    if (auth) cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
-}
-
+                        // ===== 1 chamada apenas (comportamento de MAG real) =====
+                        console.log(`[LINK] A criar link para ${realCmd}...`);
+                        cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
+                        if (!cmdUrl || typeof cmdUrl !== 'string' || cmdUrl.trim() === '') {
+                            console.log(`[LINK] 1ª tentativa falhou. Forçando novo token...`);
+                            auth = await engine.authenticate(config, config.proxy);
+                            if (auth) cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
+                        }
                         if (cmdUrl && typeof cmdUrl === 'string' && cmdUrl.trim() !== '') {
                             if (!global.streamLinkCache) global.streamLinkCache = {};
                             global.streamLinkCache[linkCacheKey] = { url: cmdUrl, ts: Date.now() };
+                            console.log(`[LINK] ✅ Link obtido para ${realCmd}`);
                         }
                     }
 
