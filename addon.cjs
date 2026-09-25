@@ -772,6 +772,56 @@ if (firstUrl && typeof firstUrl === 'string' && firstUrl.trim() !== '') {
                         }
                     }
 
+                    // ===== STREAM-WARM: abrir o stream no portal para aquecer o pipeline =====
+if (cmdUrl && typeof cmdUrl === 'string' && cmdUrl.trim() !== '') {
+    let warmUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
+    if (!warmUrl.startsWith('http')) {
+        const basePortal = config.url.split('/c/')[0];
+        warmUrl = basePortal + (warmUrl.startsWith('/') ? '' : '/') + warmUrl;
+    }
+    if (warmUrl.startsWith('http')) {
+        try {
+            console.log(`[STREAM-WARM] A abrir stream para aquecer o pipeline...`);
+            const warmHeaders = {
+                ...auth.authData.headers,
+                'Referer': config.url.replace(/\/$/, "") + "/c/",
+                'Accept': '*/*',
+                'Connection': 'keep-alive'
+            };
+            const warmRes = await axios.get(warmUrl, {
+                headers: warmHeaders,
+                responseType: 'stream',
+                timeout: 6000
+            });
+            await new Promise((resolve) => {
+                let bytes = 0;
+                const timer = setTimeout(() => {
+                    try { warmRes.data.destroy(); } catch(e) {}
+                    console.log(`[STREAM-WARM] ✅ Aquecido por timeout (${bytes} bytes)`);
+                    resolve();
+                }, 3000);
+                warmRes.data.on('data', (chunk) => {
+                    bytes += chunk.length;
+                    if (bytes > 128 * 1024) {
+                        clearTimeout(timer);
+                        try { warmRes.data.destroy(); } catch(e) {}
+                        console.log(`[STREAM-WARM] ✅ Aquecido (${bytes} bytes)`);
+                        resolve();
+                    }
+                });
+                warmRes.data.on('error', () => {
+                    clearTimeout(timer);
+                    console.log(`[STREAM-WARM] ⚠️ Erro no stream (${bytes} bytes)`);
+                    resolve();
+                });
+            });
+        } catch (e) {
+            console.log(`[STREAM-WARM] ⚠️ Falhou: ${e.message}`);
+        }
+    }
+}
+
+
                     if (typeof cmdUrl === 'string' && cmdUrl.trim() !== "") {
                         console.log(`[STREAMS] Sucesso! URL original recebido: ${cmdUrl}`);
                         let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
