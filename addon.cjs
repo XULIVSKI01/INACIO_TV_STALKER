@@ -603,119 +603,122 @@ const addon = {
     },
 
     async getStreams(type, id, configBase64, host) {
-        console.log(`[STREAMS] Pedido de stream: type=${type}, id=${id}`);
-        if (type === "series") await new Promise(resolve => setTimeout(resolve, 800));
+    console.log(`[STREAMS] Pedido de stream: type=${type}, id=${id}`);
+    if (type === "series") await new Promise(resolve => setTimeout(resolve, 800));
 
-        const parts = id.split(":"); 
-        const lIdxParts = parts[1].split("_");
-        const lIdx = parseInt(lIdxParts[0]);
-        const sig = lIdxParts[1];
-        const sId = parts[2];
-        const name = decodeURIComponent(parts[3] || "Stream");
-        const lists = this.parseConfig(configBase64); const config = lists[lIdx];
-        if (!config) return { streams: [] };
-        const expectedSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
-        if (sig && sig !== expectedSig) return { streams: [] };
+    const parts = id.split(":"); 
+    const lIdxParts = parts[1].split("_");
+    const lIdx = parseInt(lIdxParts[0]);
+    const sig = lIdxParts[1];
+    const sId = parts[2];
+    const name = decodeURIComponent(parts[3] || "Stream");
+    const lists = this.parseConfig(configBase64); const config = lists[lIdx];
+    if (!config) return { streams: [] };
+    const expectedSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
+    if (sig && sig !== expectedSig) return { streams: [] };
 
-        const pUrl = `https://${host}/proxy/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(sId)}?type=${type}`;
-        let streams = [];
-        let directAdded = false;
+    const pUrl = `https://${host}/proxy/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(sId)}?type=${type}`;
+    let streams = [];
+    let directAdded = false;
 
-        if (config?.type === 'xtream') {
-            if (config?.useDirect !== false) {
-                const b = config.url.trim().replace(/\/$/, "");
-                if (type === 'tv') {
-                    streams.push({ name: name, url: `${b}/${config.user}/${config.pass}/${sId}`, title: `📺 Directo TV`, behaviorHints: { notWebReady: true }, contentType: 'video/mp2t' });
-                } else if (type === 'movie') {
-                    streams.push({ name: name, url: `${b}/movie/${config.user}/${config.pass}/${sId}`, title: `🎬 Directo Filme`, behaviorHints: { notWebReady: false } });
-                } else if (type === 'series') {
-                    streams.push({ name: name, url: `${b}/series/${config.user}/${config.pass}/${sId}`, title: `🍿 Directo Série - ${name}`, behaviorHints: { notWebReady: false } });
+    if (config?.type === 'xtream') {
+        if (config?.useDirect !== false) {
+            const b = config.url.trim().replace(/\/$/, "");
+            if (type === 'tv') {
+                streams.push({ name: name, url: `${b}/${config.user}/${config.pass}/${sId}`, title: `📺 Directo TV`, behaviorHints: { notWebReady: true }, contentType: 'video/mp2t' });
+            } else if (type === 'movie') {
+                streams.push({ name: name, url: `${b}/movie/${config.user}/${config.pass}/${sId}`, title: `🎬 Directo Filme`, behaviorHints: { notWebReady: false } });
+            } else if (type === 'series') {
+                streams.push({ name: name, url: `${b}/series/${config.user}/${config.pass}/${sId}`, title: `🍿 Directo Série - ${name}`, behaviorHints: { notWebReady: false } });
+            }
+        }
+    } else if (config?.type === 'm3u') {
+        const url = decodeURIComponent(sId);
+        if (config?.useDirect !== false) {
+            streams.push({ name: name, url: url, title: '📺 Directo M3U', behaviorHints: { notWebReady: true }, contentType: 'video/mp2t' });
+            directAdded = true;
+        }
+    } else {
+        try {
+            let auth = await engine.authenticate(config, config.proxy);
+            if (auth) {
+                const decodedCmd = decodeURIComponent(sId);
+                let realCmd = decodedCmd;
+                let sNum = null;
+                if (decodedCmd.includes('|||')) {
+                    let partsCmd = decodedCmd.split('|||');
+                    realCmd = partsCmd[0];
+                    sNum = partsCmd[1];
+                } else if (decodedCmd.includes('|')) {
+                    let partsCmd = decodedCmd.split('|');
+                    realCmd = partsCmd[0];
+                    sNum = partsCmd[1];
                 }
-            }
-        } else if (config?.type === 'm3u') {
-            const url = decodeURIComponent(sId);
-            if (config?.useDirect !== false) {
-                streams.push({ name: name, url: url, title: '📺 Directo M3U', behaviorHints: { notWebReady: true }, contentType: 'video/mp2t' });
-                directAdded = true;
-            }
-        } else {
-            try {
-                let auth = await engine.authenticate(config, config.proxy);
-                if (auth) {
-                    const decodedCmd = decodeURIComponent(sId);
-                    let realCmd = decodedCmd;
-                    let sNum = null;
-                    if (decodedCmd.includes('|||')) {
-                        let partsCmd = decodedCmd.split('|||');
-                        realCmd = partsCmd[0];
-                        sNum = partsCmd[1];
-                    } else if (decodedCmd.includes('|')) {
-                        let partsCmd = decodedCmd.split('|');
-                        realCmd = partsCmd[0];
-                        sNum = partsCmd[1];
+
+                const linkCacheKey = `${config.url}_${config.mac || ''}_${type}_${realCmd}_${sNum || ''}`;
+                let cmdUrl = null;
+
+                const cachedLink = global.streamLinkCache && global.streamLinkCache[linkCacheKey];
+                // CACHE LONGA: 5 minutos — cobre toda a visualização + retries do Tizen
+                if (cachedLink && Date.now() - cachedLink.ts < 300000) {
+                    cmdUrl = cachedLink.url;
+                    console.log(`[LINK CACHE] Reutilizado para ${realCmd} (${Math.round((Date.now()-cachedLink.ts)/1000)}s)`);
+                } else {
+                    // 1 único create_link. Só aqui.
+                    console.log(`[LINK] A criar link para ${realCmd}...`);
+                    cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
+                    if (!cmdUrl || cmdUrl.trim() === "") {
+                        console.log(`[LINK] 1ª tentativa falhou. Forçando novo token...`);
+                        auth = await engine.authenticate(config, config.proxy);
+                        if (auth) cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
                     }
-                    console.log(`[STREAMS] Stalker - Extraindo link para cmd/id=${realCmd}, series=${sNum || 'N/A'}`);
-
-                    const linkCacheKey = `${config.url}_${config.mac || ''}_${type}_${realCmd}_${sNum || ''}`;
-                    let cmdUrl = null;
-
-                    const cachedLink = global.streamLinkCache && global.streamLinkCache[linkCacheKey];
-                    if (cachedLink && Date.now() - cachedLink.ts < 60000) {
-                        cmdUrl = cachedLink.url;
-                        console.log(`[LINK CACHE] Reutilizado para ${realCmd}`);
-                    } else {
-                        cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
-                        if (!cmdUrl || cmdUrl.trim() === "") {
-                            console.log(`[STREAMS] Link não recebido. Forçando novo token...`);
-                            auth = await engine.authenticate(config, config.proxy);
-                            if (auth) cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
-                        }
-                        if (cmdUrl && typeof cmdUrl === 'string' && cmdUrl.trim() !== '') {
-                            if (!global.streamLinkCache) global.streamLinkCache = {};
-                            global.streamLinkCache[linkCacheKey] = { url: cmdUrl, ts: Date.now() };
-                        }
-                    }
-
-                    if (typeof cmdUrl === 'string' && cmdUrl.trim() !== "") {
-                        console.log(`[STREAMS] Sucesso! URL original recebido: ${cmdUrl}`);
-                        let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
-                        if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
-                            cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
-                        }
-                        if (cleanUrl.includes('://')) {
-                            if (config?.useDirect !== false) {
-                                const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-                                streams.push({ name: '🟢 ' + name, url: cleanUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
-                                directAdded = true;
-                            }
-                        }
-                    } else {
-                        console.warn(`[STREAMS WARNING] Nenhuma tentativa devolveu link válido para ${id}`);
+                    if (cmdUrl && typeof cmdUrl === 'string' && cmdUrl.trim() !== '') {
+                        if (!global.streamLinkCache) global.streamLinkCache = {};
+                        global.streamLinkCache[linkCacheKey] = { url: cmdUrl, ts: Date.now() };
+                        console.log(`[LINK] ✅ Link obtido para ${realCmd}`);
                     }
                 }
-            } catch(e) { 
-                console.error(`[STREAM ERROR] Falha no processo de link Stalker para ${id}:`, e.message); 
-            }
 
-            if (!directAdded) {
-                if (config?.useDirect !== false) {
-                    let fallbackUrl = decodeURIComponent(sId).split('|||')[0].split('|')[0].replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
-                    if (fallbackUrl.startsWith('http')) {
-                        const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-                        streams.push({ name: '🟢 ' + name, url: fallbackUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+                if (typeof cmdUrl === 'string' && cmdUrl.trim() !== "") {
+                    console.log(`[STREAMS] Sucesso! URL original recebido: ${cmdUrl}`);
+                    let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
+                    if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
+                        cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
                     }
+                    if (cleanUrl.includes('://')) {
+                        if (config?.useDirect !== false) {
+                            const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
+                            streams.push({ name: '🟢 ' + name, url: cleanUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+                            directAdded = true;
+                        }
+                    }
+                } else {
+                    console.warn(`[STREAMS WARNING] Nenhuma tentativa devolveu link válido para ${id}`);
+                }
+            }
+        } catch(e) { 
+            console.error(`[STREAM ERROR] Falha no processo de link Stalker para ${id}:`, e.message); 
+        }
+
+        if (!directAdded) {
+            if (config?.useDirect !== false) {
+                let fallbackUrl = decodeURIComponent(sId).split('|||')[0].split('|')[0].replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
+                if (fallbackUrl.startsWith('http')) {
+                    const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
+                    streams.push({ name: '🟢 ' + name, url: fallbackUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
                 }
             }
         }
+    }
 
-        const useProxy = config?.useProxy !== false;
-        if (useProxy) {
-            const hint = config?.streamHint || '';
-            const proxyTitle = (hint ? hint + ' ' : '') + 
-                               (type === 'movie' ? '🎬 Proxy Estável' : (type === 'series' ? `🍿 Proxy Estável - ${name}` : '🔄 Proxy Estável'));
-            streams.push({ name: '🟢 ' + name, url: pUrl, title: proxyTitle, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
-        }
-        return { streams };
+    const useProxy = config?.useProxy !== false;
+    if (useProxy) {
+        const hint = config?.streamHint || '';
+        const proxyTitle = (hint ? hint + ' ' : '') + 
+                           (type === 'movie' ? '🎬 Proxy Estável' : (type === 'series' ? `🍿 Proxy Estável - ${name}` : '🔄 Proxy Estável'));
+        streams.push({ name: '🟢 ' + name, url: pUrl, title: proxyTitle, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+    }
+    return { streams };
     }
 };
 
