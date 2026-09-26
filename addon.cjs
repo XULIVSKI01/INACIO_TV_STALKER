@@ -773,22 +773,7 @@ const addon = {
                         if (cleanUrl.includes('://')) {
     if (config?.useDirect !== false) {
         const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-        streams.push({
-            name: '🟢 ' + name,
-            url: cleanUrl,
-            title: titleStr,
-            behaviorHints: {
-                notWebReady: type === 'tv',
-                proxyHeaders: {
-                    request: {
-                        'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
-                        'Referer': config.url.replace(/\/$/, '') + '/c/',
-                        'Cookie': (auth && auth.authData && auth.authData.headers && auth.authData.headers['Cookie']) || ''
-                    }
-                }
-            },
-            contentType: type === 'tv' ? 'video/mp2t' : undefined
-        });
+        streams.push({ name: '🟢 ' + name, url: cleanUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
         directAdded = true;
     }
 }
@@ -805,26 +790,10 @@ const addon = {
         let fallbackUrl = decodeURIComponent(sId).split('|||')[0].split('|')[0].replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
         if (fallbackUrl.startsWith('http')) {
             const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-            streams.push({
-                name: '🟢 ' + name,
-                url: fallbackUrl,
-                title: titleStr,
-                behaviorHints: {
-                    notWebReady: type === 'tv',
-                    proxyHeaders: {
-                        request: {
-                            'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
-                            'Referer': config.url.replace(/\/$/, '') + '/c/',
-                            'Cookie': (auth && auth.authData && auth.authData.headers && auth.authData.headers['Cookie']) || ''
-                        }
-                    }
-                },
-                contentType: type === 'tv' ? 'video/mp2t' : undefined
-            });
+            streams.push({ name: '🟢 ' + name, url: fallbackUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
         }
     }
 }
-        }
 
         // Se houver proxy configurado, forçar o stream a passar pelo proxy do addon
         const useProxy = config?.useProxy !== false;
