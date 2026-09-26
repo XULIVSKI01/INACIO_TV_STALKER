@@ -749,7 +749,6 @@ const addon = {
                         cmdUrl = cachedLink.url;
                         console.log(`[LINK CACHE] Reutilizado para ${realCmd}`);
                     } else {
-                        // ===== 1 chamada apenas (comportamento de MAG real) =====
                         console.log(`[LINK] A criar link para ${realCmd}...`);
                         cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
                         if (!cmdUrl || typeof cmdUrl !== 'string' || cmdUrl.trim() === '') {
@@ -771,12 +770,12 @@ const addon = {
                             cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
                         }
                         if (cleanUrl.includes('://')) {
-    if (config?.useDirect !== false) {
-        const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-        streams.push({ name: '🟢 ' + name, url: cleanUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
-        directAdded = true;
-    }
-}
+                            if (config?.useDirect !== false) {
+                                const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
+                                streams.push({ name: '🟢 ' + name, url: cleanUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+                                directAdded = true;
+                            }
+                        }
                     } else {
                         console.warn(`[STREAMS WARNING] Nenhuma tentativa devolveu link válido para ${id}`);
                     }
@@ -786,16 +785,17 @@ const addon = {
             }
 
             if (!directAdded) {
-    if (config?.useDirect !== false) {
-        let fallbackUrl = decodeURIComponent(sId).split('|||')[0].split('|')[0].replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
-        if (fallbackUrl.startsWith('http')) {
-            const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-            streams.push({ name: '🟢 ' + name, url: fallbackUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+                if (config?.useDirect !== false) {
+                    let fallbackUrl = decodeURIComponent(sId).split('|||')[0].split('|')[0].replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
+                    if (fallbackUrl.startsWith('http')) {
+                        const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
+                        streams.push({ name: '🟢 ' + name, url: fallbackUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+                    }
+                }
+            }
         }
-    }
-}
 
-        // Se houver proxy configurado, forçar o stream a passar pelo proxy do addon
+        // Proxy Estável
         const useProxy = config?.useProxy !== false;
         if (useProxy) {
             const hint = config?.streamHint || '';
