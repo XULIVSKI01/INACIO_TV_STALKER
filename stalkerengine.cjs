@@ -549,14 +549,14 @@ async function tryFfmpegExact(urlToPlay, auth, config, type, res, sessions, stre
 module.exports = {
     authenticate,
     createStreamLink,
-   // startFfmpegRelay,
-    //generateFiller,
+    startFfmpegRelay,
+    generateFiller,
     SessionManager,
     getAxiosOpts,
     authCache,
-    CACHE_TTL
-    //tryMultiplePipelines,
-    //tryFfmpegModernRelay,
-    //tryFfmpegStreamLegacy,
-    //tryFfmpegExact
+    CACHE_TTL,
+    tryMultiplePipelines,
+    tryFfmpegModernRelay,
+    tryFfmpegStreamLegacy,
+    tryFfmpegExact
 };
