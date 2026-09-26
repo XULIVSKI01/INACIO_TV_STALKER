@@ -63,23 +63,21 @@ async function closeLastSession(addonRef) {
     }
 
     try {
-        const hdrs = addonRef.getAxiosOpts(prev.config, { headers: prev.headers, timeout: 2000 });
+        const hdrs = addonRef.getAxiosOpts(prev.config, { headers: prev.headers, timeout: 1500 });
         const cmd = prev.channelId;
 
+        // APENAS session_end e unlink (sem logout, sem stop, sem unsubscribe)
         const endpoints = [
             `${prev.api}type=itv&action=session_end&cmd=${encodeURIComponent(cmd)}&sn=${prev.sn}&token=${prev.token}&JsHttpRequest=1-0`,
-            `${prev.api}type=itv&action=unlink&cmd=${encodeURIComponent(cmd)}&sn=${prev.sn}&token=${prev.token}&JsHttpRequest=1-0`,
-            `${prev.api}type=itv&action=stop&cmd=${encodeURIComponent(cmd)}&sn=${prev.sn}&token=${prev.token}&JsHttpRequest=1-0`,
-            `${prev.api}type=itv&action=unsubscribe&cmd=${encodeURIComponent(cmd)}&sn=${prev.sn}&token=${prev.token}&JsHttpRequest=1-0`,
-            `${prev.api}type=stb&action=logout&sn=${prev.sn}&token=${prev.token}&JsHttpRequest=1-0`
+            `${prev.api}type=itv&action=unlink&cmd=${encodeURIComponent(cmd)}&sn=${prev.sn}&token=${prev.token}&JsHttpRequest=1-0`
         ];
 
         await Promise.race([
             Promise.all(endpoints.map(u => axios.get(u, hdrs).catch(() => {}))),
-            new Promise(r => setTimeout(r, 2000))
+            new Promise(r => setTimeout(r, 1500))
         ]);
 
-        console.log(`[SESSION_END] Fechada sessão anterior: portal=${prev.config.url} canal=${cmd} (${age}ms atrás)`);
+        console.log(`[SESSION_END] Sessão anterior libertada: portal=${prev.config.url} canal=${cmd} (${age}ms atrás)`);
     } catch(e) { /* ignorar */ }
 
     global.lastActiveSession = null;
@@ -702,7 +700,7 @@ const addon = {
                         const age = Date.now() - last;
                         const COOLDOWN = 25000;
 
-                        if (last > 0 && age > 8000 && age < COOLDOWN) {
+                        if (last > 0 && age > 20000 && age < COOLDOWN) {
                             const waitSec = Math.ceil((COOLDOWN - age) / 1000);
                             console.log(`[SLOT] 🔴 Ocupado — ${waitSec}s restantes`);
                             return {
