@@ -7,6 +7,64 @@ const { spawn } = require('child_process');
 const engine = require("./stalkerengine.cjs");
 const addon = require("./addon.cjs");
 
+// ============================================================
+// KEEP-ALIVE: mantém a sessão do portal viva (como um MAG real)
+// ============================================================
+if (!global.recentConfigs) global.recentConfigs = new Set();
+const MAX_RECENT_CONFIGS = 5;
+
+function rememberConfig(configB64) {
+    if (!configB64) return;
+    global.recentConfigs.add(configB64);
+    if (global.recentConfigs.size > MAX_RECENT_CONFIGS) {
+        const first = global.recentConfigs.values().next().value;
+        global.recentConfigs.delete(first);
+    }
+}
+
+// Um único envio de get_events (mantém sessão viva)
+async function sendKeepAlive(list) {
+    try {
+        const auth = await engine.authenticate(list, list.proxy);
+        if (!auth || !auth.api || !auth.token) return false;
+
+        const url = `${auth.api}type=stb&action=get_events&event_active_id=0&init=0&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+        const res = await axios.get(url, engine.getAxiosOpts(list, {
+            headers: auth.authData.headers,
+            timeout: 4000
+        }));
+
+        // Se o portal devolveu novo token, atualiza a cache
+        const newToken = res.data?.js?.token;
+        if (newToken && newToken !== auth.token) {
+            auth.token = newToken;
+            auth.authData.headers['Authorization'] = `Bearer ${newToken}`;
+            auth.authData.headers.Cookie = auth.authData.headers.Cookie.replace(/token=[^;]+/, `token=${newToken}`);
+            auth.authData.headers.Cookie = auth.authData.headers.Cookie.replace(/access_token=[^;]+/, `access_token=${newToken}`);
+        }
+
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+// Loop background — a cada 2 minutos para cada portal conhecido
+setInterval(async () => {
+    for (const cfgB64 of global.recentConfigs) {
+        try {
+            const lists = addon.parseConfig(cfgB64);
+            for (const list of lists) {
+                if (list.type !== 'stalker') continue;
+                const ok = await sendKeepAlive(list);
+                if (ok) {
+                    console.log(`[KEEPALIVE] ✅ ${list.name || list.url} — sessão viva`);
+                }
+            }
+        } catch(e) { /* ignorar */ }
+    }
+}, 2 * 60 * 1000);   // 2 minutos
+
 const PORT = process.env.PORT || 7860;
 const app = express();
 
@@ -410,8 +468,12 @@ function updateMasterCheckbox(groupId) {
 });
 
 // Rotas do Stremio
-app.get("/:config/manifest.json", async (req, res) => res.json(await addon.getManifest(req.params.config)));
+app.get("/:config/manifest.json", async (req, res) => {
+    rememberConfig(req.params.config);
+    res.json(await addon.getManifest(req.params.config));
+});
 app.get("/:config/catalog/:type/:id/:extra?.json", async (req, res) => {
+    rememberConfig(req.params.config);
     const { config, type, id, extra } = req.params;
     let extraObj = {};
     if (extra) {
@@ -424,6 +486,7 @@ app.get("/:config/catalog/:type/:id/:extra?.json", async (req, res) => {
 });
 app.get("/:config/meta/:type/:id.json", async (req, res) => res.json(await addon.getMeta(req.params.type, req.params.id, req.params.config)));
 app.get("/:config/stream/:type/:id.json", async (req, res) => {
+    rememberConfig(req.params.config);
     const host = req.headers.host;
     res.json(await addon.getStreams(req.params.type, req.params.id, req.params.config, host));
 });
