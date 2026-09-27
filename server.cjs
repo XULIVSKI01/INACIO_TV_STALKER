@@ -36,6 +36,11 @@ setInterval(() => {
     }
 }, 30000);
 
+app.get("/ping", (req, res) => {
+    console.log(`[PING] ${new Date().toISOString()}`);
+    res.status(200).send("pong");
+});
+
 // Página de Configuração (inalterada)
 app.get("/", (req, res) => res.redirect("/configure"));
 app.get("/configure", (req, res) => {
