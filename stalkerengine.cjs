@@ -167,13 +167,11 @@ function extractUrl(jsData) {
     }
     if (!url) return null;
 
-    // Limpa prefixos ffmpeg/ffrt/rtmp e remove TODOS os espaços/TAB/newlines
     url = url.trim().replace(/^['"`]?(ffrt|ffmpeg|ffrt2|rtmp)['"`]?\s+/i, "").trim();
     url = url.replace(/[\s\t\r\n]+/g, "");
 
     return url;
 }
-
 // ============================================================
 // 3. RELAY FFMPEG (unificado, com proxy)
 // ============================================================
