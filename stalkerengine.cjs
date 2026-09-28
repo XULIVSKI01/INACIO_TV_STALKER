@@ -167,31 +167,33 @@ function extractUrl(jsData) {
     }
     if (!url) return null;
 
+    // 1. Remover prefixos ffmpeg/ffrt/rtmp e limpar whitespace
     url = url.trim().replace(/^['"`]?(ffrt|ffmpeg|ffrt2|rtmp)['"`]?\s+/i, "").trim();
     url = url.replace(/[\s\t\r\n]+/g, "");
 
-    // ===== FIX: remover duplicação de domínio no path =====
-    // Padrão: /aaa/bbb/dominio.com:porta/aaa/bbb/resto → /aaa/bbb/resto
+    // 2. Tentar reparar duplicação de domínio APENAS se a URL for válida
     try {
         const u = new URL(url);
         const parts = u.pathname.split('/').filter(Boolean);
-        // Regex corrigida: aceita MÚLTIPLOS pontos (ex: sub.dominio.com:80)
         const domainLikeRe = /^[a-z0-9-]+(\.[a-z0-9-]+)+(:\d+)?$/i;
 
         for (let i = 1; i < parts.length - 1; i++) {
-            if (domainLikeRe.test(parts[i])) {
-                if (i + 1 < parts.length && parts[i + 1] === parts[0]) {
-                    const last = parts[parts.length - 1];
-                    const fixedPath = '/' + [...parts.slice(0, i), last].join('/');
-                    const fixedUrl = `${u.protocol}//${u.host}${fixedPath}${u.search}`;
-                    console.log(`[URL FIX] ${fixedUrl}`);
-                    return fixedUrl;
-                }
+            if (domainLikeRe.test(parts[i]) && parts[i + 1] === parts[0]) {
+                const last = parts[parts.length - 1];
+                const fixedPath = '/' + [...parts.slice(0, i), last].join('/');
+                const fixedUrl = `${u.protocol}//${u.host}${fixedPath}${u.search}`;
+                console.log(`[URL FIX] ${fixedUrl}`);
+                return fixedUrl;
             }
         }
-    } catch(e) { /* não é URL válido, devolve como está */ }
 
-    return url;
+        // URL válida mas sem duplicação → devolve como está
+        return url;
+    } catch(e) {
+        // URL inválida (ex: tem TAB, mangled) → devolve raw para o portal decidir
+        console.log(`[URL RAW] URL inválida, a devolver raw: ${url.substring(0, 80)}`);
+        return url;
+    }
 }
 /*
 function extractUrl(jsData) {
