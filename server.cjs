@@ -512,32 +512,45 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
         })();
     }
 
-    // Regra: só redireciona no 3º pedido (hits=3) E se tiver URL real
     const realUrl = global.metaShield[key + '_real'];
-    if (hits >= 3 && realUrl) {
-        console.log(`[META-SHIELD] Hit ${hits} → redirect para o portal ✅`);
-        return res.redirect(302, realUrl);
-    }
 
-    // Caso contrário, fake TS
-    console.log(`[META-SHIELD] Hit ${hits} → fake TS`);
+// Hits 1-2: probe → fake TS
+if (hits <= 2) {
+    console.log(`[META-SHIELD] Hit ${hits}/2 → fake TS`);
     const fakeTs = Buffer.alloc(188, 0);
     fakeTs[0] = 0x47;
     res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Content-Length': fakeTs.length, 'Connection': 'close' });
     return res.end(fakeTs);
-});
+}
 
-setInterval(() => {
-    if (!global.metaShield) return;
-    const now = Date.now();
-    Object.keys(global.metaShield).forEach(k => {
-        if (typeof global.metaShield[k] === 'number' && now - global.metaShield[k] > 120000) {
-            delete global.metaShield[k];
-            delete global.metaShield[k + '_hits'];
-            delete global.metaShield[k + '_real'];
-        }
-    });
-}, 60000);
+// Hit 3: ÚNICO redirect para o portal
+if (hits === 3 && realUrl) {
+    console.log(`[META-SHIELD] Hit 3 → redirect único para o portal ✅`);
+    return res.redirect(302, realUrl);
+}
+
+// Hits 4+: Tizen está a insistir. Não deixamos abrir 2ª ligação ao portal.
+// Respondemos com um stream fake MUITO longo que nunca termina — o Tizen fica "preso" aqui
+// e a ligação principal (a do hit 3) continua viva.
+console.log(`[META-SHIELD] Hit ${hits} → fake stream longo (não toca no portal)`);
+res.writeHead(200, {
+    'Content-Type': 'video/mp2t',
+    'Content-Length': '999999999',
+    'Connection': 'keep-alive',
+    'Transfer-Encoding': 'chunked'
+});
+// Envia 188 bytes TS válidos, depois 1 byte por segundo (mantém ligação "viva" mas não avança)
+const fakeTs = Buffer.alloc(188, 0);
+fakeTs[0] = 0x47;
+res.write(fakeTs);
+
+const keepAlive = setInterval(() => {
+    try { res.write(Buffer.from([0x47])); } catch(e) {}
+}, 1000);
+
+req.on('close', () => clearInterval(keepAlive));
+res.on('error', () => clearInterval(keepAlive));
+return;
 /**
 // ===== METADATA SHIELD: responde ao metadata probe do Tizen sem tocar no portal =====
 app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
