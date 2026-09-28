@@ -347,51 +347,6 @@ const addon = {
                     console.log(`[STALKER] Cache parcial: ${cached.data.length} itens (background a carregar)`);
                 }
 
-                // ===== WARM-UP: aquece os primeiros 3 canais em background =====
-if (sType === 'itv') {
-    const channelsToWarm = (cached.data || []).slice(0, 3);
-    // NÃO espera — corre em background
-    (async () => {
-        for (const ch of channelsToWarm) {
-            try {
-                const chCmd = ch.cmd || ch.id;
-                if (!chCmd) continue;
-                // 1) create_link (cria sessão no portal)
-                const linkUrl = `${safeApi}type=itv&action=create_link&cmd=${encodeURIComponent(chCmd)}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
-                const linkRes = await axios.get(linkUrl, self.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 4000 }));
-                let streamUrl = linkRes.data?.js?.cmd || linkRes.data?.js?.url;
-                if (!streamUrl || typeof streamUrl !== 'string') continue;
-                streamUrl = streamUrl.trim().replace(/^['"`]?(ffrt|ffmpeg|ffrt2|rtmp)['"`]?\s+/i, '').trim();
-                if (!streamUrl.startsWith('http')) {
-                    const basePortal = config.url.split('/c/')[0];
-                    streamUrl = basePortal + (streamUrl.startsWith('/') ? '' : '/') + streamUrl;
-                }
-                // 2) abre o stream por 500ms (acorda o pipeline de vídeo)
-                const warmHeaders = {
-                    'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
-                    'Referer': config.url.replace(/\/$/, '') + '/c/',
-                    'Cookie': auth.authData.headers['Cookie'] || '',
-                    'Accept': '*/*',
-                    'Connection': 'keep-alive'
-                };
-                const warmRes = await axios.get(streamUrl, { headers: warmHeaders, responseType: 'stream', timeout: 4000 });
-                await new Promise(r => {
-                    let bytes = 0;
-                    const t = setTimeout(() => { try { warmRes.data.destroy(); } catch(e){} r(); }, 500);
-                    warmRes.data.on('data', c => {
-                        bytes += c.length;
-                        if (bytes > 32 * 1024) { clearTimeout(t); try { warmRes.data.destroy(); } catch(e){} r(); }
-                    });
-                    warmRes.data.on('error', () => { clearTimeout(t); r(); });
-                });
-                console.log(`[WARM-CATALOG] ✅ Aquecido ${chCmd}`);
-            } catch(e) {
-                // Silencioso — não interessa se falhar
-            }
-        }
-    })();
-}
-
                 metas = (cached.data || []).slice(skip, skip + 100).map(m => {
                     let targetId = m.cmd || m.id;
                     return {
