@@ -175,11 +175,11 @@ function extractUrl(jsData) {
     try {
         const u = new URL(url);
         const parts = u.pathname.split('/').filter(Boolean);
-        const domainLikeRe = /^[a-z0-9-]+\.[a-z]{2,}(:\d+)?$/i;
+        // Regex corrigida: aceita MÚLTIPLOS pontos (ex: sub.dominio.com:80)
+        const domainLikeRe = /^[a-z0-9-]+(\.[a-z0-9-]+)+(:\d+)?$/i;
 
         for (let i = 1; i < parts.length - 1; i++) {
             if (domainLikeRe.test(parts[i])) {
-                // Confirma se parts[i+1] é igual a parts[0] (sinal de duplicação)
                 if (i + 1 < parts.length && parts[i + 1] === parts[0]) {
                     const last = parts[parts.length - 1];
                     const fixedPath = '/' + [...parts.slice(0, i), last].join('/');
