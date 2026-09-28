@@ -347,6 +347,51 @@ const addon = {
                     console.log(`[STALKER] Cache parcial: ${cached.data.length} itens (background a carregar)`);
                 }
 
+                // ===== WARM-UP: aquece os primeiros 3 canais em background =====
+if (sType === 'itv') {
+    const channelsToWarm = (cached.data || []).slice(0, 3);
+    // NÃO espera — corre em background
+    (async () => {
+        for (const ch of channelsToWarm) {
+            try {
+                const chCmd = ch.cmd || ch.id;
+                if (!chCmd) continue;
+                // 1) create_link (cria sessão no portal)
+                const linkUrl = `${safeApi}type=itv&action=create_link&cmd=${encodeURIComponent(chCmd)}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+                const linkRes = await axios.get(linkUrl, self.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 4000 }));
+                let streamUrl = linkRes.data?.js?.cmd || linkRes.data?.js?.url;
+                if (!streamUrl || typeof streamUrl !== 'string') continue;
+                streamUrl = streamUrl.trim().replace(/^['"`]?(ffrt|ffmpeg|ffrt2|rtmp)['"`]?\s+/i, '').trim();
+                if (!streamUrl.startsWith('http')) {
+                    const basePortal = config.url.split('/c/')[0];
+                    streamUrl = basePortal + (streamUrl.startsWith('/') ? '' : '/') + streamUrl;
+                }
+                // 2) abre o stream por 500ms (acorda o pipeline de vídeo)
+                const warmHeaders = {
+                    'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
+                    'Referer': config.url.replace(/\/$/, '') + '/c/',
+                    'Cookie': auth.authData.headers['Cookie'] || '',
+                    'Accept': '*/*',
+                    'Connection': 'keep-alive'
+                };
+                const warmRes = await axios.get(streamUrl, { headers: warmHeaders, responseType: 'stream', timeout: 4000 });
+                await new Promise(r => {
+                    let bytes = 0;
+                    const t = setTimeout(() => { try { warmRes.data.destroy(); } catch(e){} r(); }, 500);
+                    warmRes.data.on('data', c => {
+                        bytes += c.length;
+                        if (bytes > 32 * 1024) { clearTimeout(t); try { warmRes.data.destroy(); } catch(e){} r(); }
+                    });
+                    warmRes.data.on('error', () => { clearTimeout(t); r(); });
+                });
+                console.log(`[WARM-CATALOG] ✅ Aquecido ${chCmd}`);
+            } catch(e) {
+                // Silencioso — não interessa se falhar
+            }
+        }
+    })();
+}
+
                 metas = (cached.data || []).slice(skip, skip + 100).map(m => {
                     let targetId = m.cmd || m.id;
                     return {
@@ -703,69 +748,7 @@ const addon = {
     let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
     if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
         cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
-    }
-
-    // ===== STREAM-WARM: abre o URL por 800ms para aquecer o pipeline =====
-    if (type === 'tv' && config?.type === 'stalker' && auth && cleanUrl.startsWith('http')) {
-        try {
-            console.log(`[WARM] A abrir stream para aquecer o pipeline...`);
-            const warmHeaders = {
-                'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
-                'Referer': config.url.replace(/\/$/, "") + "/c/",
-                'Cookie': (auth.authData.headers && auth.authData.headers['Cookie']) || '',
-                'Accept': '*/*',
-                'Connection': 'keep-alive'
-            };
-            const warmRes = await axios.get(cleanUrl, {
-                headers: warmHeaders,
-                responseType: 'stream',
-                timeout: 5000
-            });
-            await new Promise((resolve) => {
-                let bytes = 0;
-                const timer = setTimeout(() => {
-                    try { warmRes.data.destroy(); } catch(e) {}
-                    console.log(`[WARM] ✅ Aquecido por timeout (${bytes} bytes)`);
-                    resolve();
-                }, 800);
-                warmRes.data.on('data', (chunk) => {
-                    bytes += chunk.length;
-                    if (bytes > 64 * 1024) {
-                        clearTimeout(timer);
-                        try { warmRes.data.destroy(); } catch(e) {}
-                        console.log(`[WARM] ✅ Aquecido (${bytes} bytes)`);
-                        resolve();
-                    }
-                });
-                warmRes.data.on('error', () => {
-                    clearTimeout(timer);
-                    console.log(`[WARM] ⚠️ Erro (${bytes} bytes)`);
-                    resolve();
-                });
-            });
-        } catch(e) {
-            console.log(`[WARM] ⚠️ Falhou: ${e.message}`);
-        }
-    }
-
-    if (cleanUrl.includes('://')) {
-        if (config?.useDirect !== false) {
-            const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-            streams.push({ name: '🟢 ' + name, url: cleanUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
-            directAdded = true;
-        }
-    }
-} else {
-    console.warn(`[STREAMS WARNING] Nenhuma tentativa devolveu link válido para ${id}`);
- }               
-                
-/*
-if (typeof cmdUrl === 'string' && cmdUrl.trim() !== "") {
-    console.log(`[STREAMS] Sucesso! URL original recebido: ${cmdUrl}`);
-    let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
-    if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
-        cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
-    }
+    }    
 
     if (cleanUrl.includes('://')) {
     if (config?.useDirect !== false) {
@@ -777,7 +760,7 @@ if (typeof cmdUrl === 'string' && cmdUrl.trim() !== "") {
 } else {
     console.warn(`[STREAMS WARNING] Nenhuma tentativa devolveu link válido para ${id}`);
 }
-   */         }
+            }
         } catch(e) { 
             console.error(`[STREAM ERROR] Falha no processo de link Stalker para ${id}:`, e.message); 
         }
