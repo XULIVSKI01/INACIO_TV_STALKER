@@ -481,14 +481,28 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
     if (!global.metaShield) global.metaShield = {};
     const now = Date.now();
 
-    // 2º pedido em < 60s = reprodução → redireciona
-    if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
-        console.log(`[META-SHIELD] 2º pedido → a redirecionar para o portal`);
-        // Devolve 302 para o URL real do portal
-        const realUrl = global.metaShield[key + '_real'];
-        if (realUrl) return res.redirect(302, realUrl);
-        return res.status(500).end();
+    // Se já redirecionámos 1 vez, deixamos o Tizen "preso" com fake TS para ele não reabrir
+if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
+    const redirectCount = global.metaShield[key + '_redirects'] || 0;
+    const realUrl = global.metaShield[key + '_real'];
+
+    if (redirectCount < 1 && realUrl) {
+        global.metaShield[key + '_redirects'] = redirectCount + 1;
+        console.log(`[META-SHIELD] Redirecionar #${redirectCount + 1} → portal`);
+        return res.redirect(302, realUrl);
     }
+
+    // Já redirecionámos antes → Tizen está a insistir, damos fake TS para desistir
+    console.log(`[META-SHIELD] Tizen insistiu (${redirectCount + 1}º) → fake TS`);
+    const fakeTs = Buffer.alloc(188, 0);
+    fakeTs[0] = 0x47;
+    res.writeHead(200, {
+        'Content-Type': 'video/mp2t',
+        'Content-Length': fakeTs.length,
+        'Connection': 'close'
+    });
+    return res.end(fakeTs);
+}
 
     // 1º pedido = metadata → responde com fake TS header
     global.metaShield[key] = now;
@@ -534,6 +548,7 @@ setInterval(() => {
         if (typeof global.metaShield[k] === 'number' && now - global.metaShield[k] > 120000) {
             delete global.metaShield[k];
             delete global.metaShield[k + '_real'];
+            delete global.metaShield[k + '_redirects'];
         }
     });
 }, 60000);
