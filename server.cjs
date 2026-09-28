@@ -551,6 +551,8 @@ const keepAlive = setInterval(() => {
 req.on('close', () => clearInterval(keepAlive));
 res.on('error', () => clearInterval(keepAlive));
 return;
+   }
+        });        
 /**
 // ===== METADATA SHIELD: responde ao metadata probe do Tizen sem tocar no portal =====
 app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
