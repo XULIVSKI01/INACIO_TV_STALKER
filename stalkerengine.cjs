@@ -167,26 +167,25 @@ function extractUrl(jsData) {
     }
     if (!url) return null;
 
-    // 1. Remover prefixos ffmpeg/ffrt/etc e espaços/TAB
     url = url.trim().replace(/^['"`]?(ffrt|ffmpeg|ffrt2|rtmp)['"`]?\s+/i, "").trim();
     url = url.replace(/[\s\t\r\n]+/g, "");
 
-    // 2. Detetar e corrigir URL com domínio duplicado a meio do path
+    // ===== FIX: remover duplicação de domínio no path =====
+    // Padrão: /aaa/bbb/dominio.com:porta/aaa/bbb/resto → /aaa/bbb/resto
     try {
         const u = new URL(url);
         const parts = u.pathname.split('/').filter(Boolean);
-        const domainLikeRe = /^[a-z0-9-]+\.(net|com|org|tv|io|xyz|top|sbs|info|live|online|site|cc|me|pt|br|es|fr|it|de|uk|nl|be|ch|at|pl|ru|cn)$/i;
+        const domainLikeRe = /^[a-z0-9-]+\.[a-z]{2,}(:\d+)?$/i;
 
         for (let i = 1; i < parts.length - 1; i++) {
             if (domainLikeRe.test(parts[i])) {
-                const before = parts.slice(0, i);
-                const after = parts.slice(i + 1);
-                // Se o segmento `after` contém o primeiro segmento do `before`, é duplicação
-                if (before.length > 0 && after.includes(before[0])) {
-                    const lastPart = parts[parts.length - 1];
-                    const fixed = `${u.protocol}//${u.host}/${before.join('/')}/${lastPart}${u.search}`;
-                    console.log(`[URL FIX] Corrigido: ${fixed}`);
-                    return fixed;
+                // Confirma se parts[i+1] é igual a parts[0] (sinal de duplicação)
+                if (i + 1 < parts.length && parts[i + 1] === parts[0]) {
+                    const last = parts[parts.length - 1];
+                    const fixedPath = '/' + [...parts.slice(0, i), last].join('/');
+                    const fixedUrl = `${u.protocol}//${u.host}${fixedPath}${u.search}`;
+                    console.log(`[URL FIX] ${fixedUrl}`);
+                    return fixedUrl;
                 }
             }
         }
