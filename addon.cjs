@@ -720,14 +720,15 @@ if (typeof cmdUrl === 'string' && cmdUrl.trim() !== "") {
                 if (Date.now() - lastHb > 120000) {
                     global.heartbeatSent[hbKey] = Date.now();
                     const addonSelf = this;
-                    const sendPing = () => {
-                        try {
-                            const pingUrl = `${auth.api}type=itv&action=set_play_status&status=1&id=${encodeURIComponent(realCmd)}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
-                            axios.get(pingUrl, addonSelf.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 3000 }))
-                                .then(() => console.log(`[HEARTBEAT] ✅ ${realCmd}`))
-                                .catch(() => {});
-                        } catch(e) {}
-                    };
+                   const sendPing = () => {
+    try {
+        // MAG real usa get_events durante reprodução, não set_play_status
+        const pingUrl = `${auth.api}type=stb&action=get_events&event_active_id=0&init=0&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+        axios.get(pingUrl, addonSelf.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 3000 }))
+            .then(() => console.log(`[HEARTBEAT] ✅ ${realCmd}`))
+            .catch(() => {});
+    } catch(e) {}
+};
                     setTimeout(sendPing, 30000);
                     setTimeout(sendPing, 60000);
                     setTimeout(sendPing, 120000);
