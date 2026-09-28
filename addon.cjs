@@ -698,6 +698,68 @@ const addon = {
 }
 }
 
+ if (typeof cmdUrl === 'string' && cmdUrl.trim() !== "") {
+    console.log(`[STREAMS] URL obtido: ${cmdUrl}`);
+    let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
+    if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
+        cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
+    }
+
+    // ===== STREAM-WARM: abre o URL por 800ms para aquecer o pipeline =====
+    if (type === 'tv' && config?.type === 'stalker' && auth && cleanUrl.startsWith('http')) {
+        try {
+            console.log(`[WARM] A abrir stream para aquecer o pipeline...`);
+            const warmHeaders = {
+                'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
+                'Referer': config.url.replace(/\/$/, "") + "/c/",
+                'Cookie': (auth.authData.headers && auth.authData.headers['Cookie']) || '',
+                'Accept': '*/*',
+                'Connection': 'keep-alive'
+            };
+            const warmRes = await axios.get(cleanUrl, {
+                headers: warmHeaders,
+                responseType: 'stream',
+                timeout: 5000
+            });
+            await new Promise((resolve) => {
+                let bytes = 0;
+                const timer = setTimeout(() => {
+                    try { warmRes.data.destroy(); } catch(e) {}
+                    console.log(`[WARM] ✅ Aquecido por timeout (${bytes} bytes)`);
+                    resolve();
+                }, 800);
+                warmRes.data.on('data', (chunk) => {
+                    bytes += chunk.length;
+                    if (bytes > 64 * 1024) {
+                        clearTimeout(timer);
+                        try { warmRes.data.destroy(); } catch(e) {}
+                        console.log(`[WARM] ✅ Aquecido (${bytes} bytes)`);
+                        resolve();
+                    }
+                });
+                warmRes.data.on('error', () => {
+                    clearTimeout(timer);
+                    console.log(`[WARM] ⚠️ Erro (${bytes} bytes)`);
+                    resolve();
+                });
+            });
+        } catch(e) {
+            console.log(`[WARM] ⚠️ Falhou: ${e.message}`);
+        }
+    }
+
+    if (cleanUrl.includes('://')) {
+        if (config?.useDirect !== false) {
+            const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
+            streams.push({ name: '🟢 ' + name, url: cleanUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+            directAdded = true;
+        }
+    }
+} else {
+    console.warn(`[STREAMS WARNING] Nenhuma tentativa devolveu link válido para ${id}`);
+ }               
+                
+/*
 if (typeof cmdUrl === 'string' && cmdUrl.trim() !== "") {
     console.log(`[STREAMS] Sucesso! URL original recebido: ${cmdUrl}`);
     let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
@@ -706,40 +768,16 @@ if (typeof cmdUrl === 'string' && cmdUrl.trim() !== "") {
     }
 
     if (cleanUrl.includes('://')) {
-        if (config?.useDirect !== false) {
-            const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-            streams.push({ name: '🟢 ' + name, url: cleanUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
-            directAdded = true;
-
-            // ===== HEARTBEAT: avisa o portal que a ligação é legítima =====
-            if (type === 'tv' && config?.type === 'stalker' && auth) {
-                const hbKey = `${config.url}_${realCmd}`;
-                if (!global.heartbeatSent) global.heartbeatSent = {};
-                // Só envia 1 vez por canal em 2 minutos (evita 24 pings se o Stremio fizer 8 pedidos paralelos)
-                const lastHb = global.heartbeatSent[hbKey] || 0;
-                if (Date.now() - lastHb > 120000) {
-                    global.heartbeatSent[hbKey] = Date.now();
-                    const addonSelf = this;
-                   const sendPing = () => {
-    try {
-        // MAG real usa get_events durante reprodução, não set_play_status
-        const pingUrl = `${auth.api}type=stb&action=get_events&event_active_id=0&init=0&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
-        axios.get(pingUrl, addonSelf.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 3000 }))
-            .then(() => console.log(`[HEARTBEAT] ✅ ${realCmd}`))
-            .catch(() => {});
-    } catch(e) {}
-};
-                    setTimeout(sendPing, 30000);
-                    setTimeout(sendPing, 60000);
-                    setTimeout(sendPing, 120000);
-                }
-            }
-        }
+    if (config?.useDirect !== false) {
+        const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
+        streams.push({ name: '🟢 ' + name, url: cleanUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+        directAdded = true;
     }
+  }
 } else {
     console.warn(`[STREAMS WARNING] Nenhuma tentativa devolveu link válido para ${id}`);
 }
-            }
+   */         }
         } catch(e) { 
             console.error(`[STREAM ERROR] Falha no processo de link Stalker para ${id}:`, e.message); 
         }
