@@ -468,6 +468,76 @@ function updateMasterCheckbox(groupId) {
 });
 
 // Rotas do Stremio
+// ===== METADATA SHIELD: responde ao metadata probe do Tizen sem tocar no portal =====
+app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
+    const { config, listIdx, channelId } = req.params;
+    const type = req.query.type || 'tv';
+    const lists = addon.parseConfig(config);
+    const configData = lists[listIdx];
+    if (!configData) return res.status(400).end();
+
+    // Se já vimos este pedido antes (o 2º do Tizen) → redireciona para o portal real
+    const key = `${config.slice(0,20)}_${channelId}`;
+    if (!global.metaShield) global.metaShield = {};
+    const now = Date.now();
+
+    // 2º pedido em < 60s = reprodução → redireciona
+    if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
+        console.log(`[META-SHIELD] 2º pedido → a redirecionar para o portal`);
+        // Devolve 302 para o URL real do portal
+        const realUrl = global.metaShield[key + '_real'];
+        if (realUrl) return res.redirect(302, realUrl);
+        return res.status(500).end();
+    }
+
+    // 1º pedido = metadata → responde com fake TS header
+    global.metaShield[key] = now;
+    console.log(`[META-SHIELD] 1º pedido (metadata) → a responder localmente`);
+
+    // Cria o URL real do portal em background (para o 2º pedido)
+    try {
+        const auth = await engine.authenticate(configData, configData.proxy);
+        if (!auth) return res.status(401).end();
+        const stalkerCmd = decodeURIComponent(channelId);
+        const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+        const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers, timeout: 5000 }));
+        let streamUrl = linkRes.data?.js?.cmd || linkRes.data?.js?.url;
+        if (streamUrl) {
+            streamUrl = streamUrl.trim().replace(/^['"`]?(ffrt|ffmpeg|ffrt2|rtmp)['"`]?\s+/i, '').trim();
+            if (!streamUrl.startsWith('http')) {
+                const basePortal = configData.url.split('/c/')[0];
+                streamUrl = basePortal + (streamUrl.startsWith('/') ? '' : '/') + streamUrl;
+            }
+            global.metaShield[key + '_real'] = streamUrl;
+            console.log(`[META-SHIELD] URL real guardado: ${streamUrl.substring(0, 60)}...`);
+        }
+    } catch(e) {
+        console.error(`[META-SHIELD] Erro ao criar link: ${e.message}`);
+    }
+
+    // Responde com fake TS bytes (sync byte 0x47 + 187 bytes de zeros = 1 packet TS válido)
+    const fakeTs = Buffer.alloc(188, 0);
+    fakeTs[0] = 0x47; // Sync byte de um pacote MPEG-TS
+    res.writeHead(200, {
+        'Content-Type': 'video/mp2t',
+        'Content-Length': fakeTs.length,
+        'Connection': 'close'
+    });
+    res.end(fakeTs);
+});
+
+// Limpeza do metaShield a cada minuto
+setInterval(() => {
+    if (!global.metaShield) return;
+    const now = Date.now();
+    Object.keys(global.metaShield).forEach(k => {
+        if (typeof global.metaShield[k] === 'number' && now - global.metaShield[k] > 120000) {
+            delete global.metaShield[k];
+            delete global.metaShield[k + '_real'];
+        }
+    });
+}, 60000);
+
 app.get("/:config/manifest.json", async (req, res) => {
     rememberConfig(req.params.config);
     res.json(await addon.getManifest(req.params.config));
