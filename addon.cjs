@@ -658,19 +658,38 @@ const addon = {
                 const linkCacheKey = `${config.url}_${config.mac || ''}_${type}_${realCmd}_${sNum || ''}`;
                 let cmdUrl = null;
 
+                if (!global.pendingLinkRequests) global.pendingLinkRequests = {};
+
+                // 1) Cache curta (5s) — absorve a rajada paralela do Stremio
                 const cachedLink = global.streamLinkCache && global.streamLinkCache[linkCacheKey];
-                // CACHE LONGA: 5 minutos — cobre toda a visualização + retries do Tizen
-                if (cachedLink && Date.now() - cachedLink.ts < 300000) {
+                if (cachedLink && Date.now() - cachedLink.ts < 5000) {
                     cmdUrl = cachedLink.url;
-                    console.log(`[LINK CACHE] Reutilizado para ${realCmd} (${Math.round((Date.now()-cachedLink.ts)/1000)}s)`);
-                } else {
-                    // 1 único create_link. Só aqui.
+                    console.log(`[LINK CACHE] Reutilizado para ${realCmd} (${Math.round((Date.now()-cachedLink.ts))}ms)`);
+                }
+                // 2) Se já há um create_link em curso para o mesmo canal → aguarda
+                else if (global.pendingLinkRequests[linkCacheKey]) {
+                    console.log(`[LINK PENDING] A aguardar pedido em curso para ${realCmd}`);
+                    try {
+                        cmdUrl = await global.pendingLinkRequests[linkCacheKey];
+                    } catch(e) { cmdUrl = null; }
+                }
+                // 3) Ninguém pediu ainda → cria agora
+                else {
                     console.log(`[LINK] A criar link para ${realCmd}...`);
-                    cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
-                    if (!cmdUrl || cmdUrl.trim() === "") {
-                        console.log(`[LINK] 1ª tentativa falhou. Forçando novo token...`);
-                        auth = await engine.authenticate(config, config.proxy);
-                        if (auth) cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
+                    const promise = (async () => {
+                        let url = await engine.createStreamLink(auth, config, realCmd, type, sNum);
+                        if (!url || url.trim() === "") {
+                            console.log(`[LINK] 1ª tentativa falhou. Forçando novo token...`);
+                            const newAuth = await engine.authenticate(config, config.proxy);
+                            if (newAuth) url = await engine.createStreamLink(newAuth, config, realCmd, type, sNum);
+                        }
+                        return url;
+                    })();
+                    global.pendingLinkRequests[linkCacheKey] = promise;
+                    try {
+                        cmdUrl = await promise;
+                    } finally {
+                        delete global.pendingLinkRequests[linkCacheKey];
                     }
                     if (cmdUrl && typeof cmdUrl === 'string' && cmdUrl.trim() !== '') {
                         if (!global.streamLinkCache) global.streamLinkCache = {};
