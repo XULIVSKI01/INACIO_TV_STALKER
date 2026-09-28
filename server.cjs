@@ -577,37 +577,25 @@ if (hits === 3 && realUrl) {
     return res.end();
 }
 
-// Hits 4+: Tizen quer renovar. Cria NOVO link e redireciona para ele.
-// Isto é o que uma MAG faz naturalmente: reabre com token novo.
-console.log(`[META-SHIELD] Hit ${hits} → renovar link (novo create_link)`);
-try {
-    const auth2 = await engine.authenticate(configData, configData.proxy);
-    if (auth2) {
-        const stalkerCmd2 = decodeURIComponent(channelId);
-        const linkUrl2 = `${auth2.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd2)}&sn=${auth2.authData.sn}&token=${auth2.token}&JsHttpRequest=1-0`;
-        const linkRes2 = await axios.get(linkUrl2, engine.getAxiosOpts(configData, { headers: auth2.authData.headers, timeout: 5000 }));
-        let newUrl = linkRes2.data?.js?.cmd || linkRes2.data?.js?.url;
-        if (newUrl && typeof newUrl === 'string') {
-            newUrl = newUrl.trim().replace(/^['"`]?(ffrt|ffmpeg|ffrt2|rtmp)['"`]?\s+/i, '').trim();
-            if (!newUrl.startsWith('http')) {
-                const basePortal = configData.url.split('/c/')[0];
-                newUrl = basePortal + (newUrl.startsWith('/') ? '' : '/') + newUrl;
-            }
-            global.metaShield[key + '_real'] = newUrl;
-            console.log(`[META-SHIELD] ✅ Novo link → redirect`);
-            return res.redirect(302, newUrl);
-        }
-    }
-} catch(e) {
-    console.log(`[META-SHIELD] Renovação falhou: ${e.message}`);
-}
-// Fallback se falhar: fake stream
-const fakeTs = Buffer.alloc(188, 0);
-fakeTs[0] = 0x47;
-res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Content-Length': fakeTs.length, 'Connection': 'close' });
-return res.end();
-});
+    // Hits 4+: Tizen insiste. Bloqueia com fake stream longo (não abre nova ligação ao portal)
+    console.log(`[META-SHIELD] Hit ${hits} → fake stream longo`);
+    res.writeHead(200, {
+        'Content-Type': 'video/mp2t',
+        'Connection': 'keep-alive',
+        'Transfer-Encoding': 'chunked'
+    });
+    const fakeTs = Buffer.alloc(188, 0);
+    fakeTs[0] = 0x47;
+    res.write(fakeTs);
 
+    const keepAlive = setInterval(() => {
+        try { res.write(Buffer.from([0x47])); } catch(e) {}
+    }, 1000);
+
+    req.on('close', () => clearInterval(keepAlive));
+    res.on('error', () => clearInterval(keepAlive));
+    return;
+});
 setInterval(() => {
     if (!global.metaShield) return;
     const now = Date.now();
