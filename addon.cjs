@@ -692,28 +692,52 @@ const addon = {
                         delete global.pendingLinkRequests[linkCacheKey];
                     }
                     if (cmdUrl && typeof cmdUrl === 'string' && cmdUrl.trim() !== '') {
-                        if (!global.streamLinkCache) global.streamLinkCache = {};
-                        global.streamLinkCache[linkCacheKey] = { url: cmdUrl, ts: Date.now() };
-                        console.log(`[LINK] ✅ Link obtido para ${realCmd}`);
-                    }
-                }
+    if (!global.streamLinkCache) global.streamLinkCache = {};
+    global.streamLinkCache[linkCacheKey] = { url: cmdUrl, ts: Date.now() };
+    console.log(`[LINK] ✅ Link obtido para ${realCmd}`);
+}
+}
 
-                if (typeof cmdUrl === 'string' && cmdUrl.trim() !== "") {
-                    console.log(`[STREAMS] Sucesso! URL original recebido: ${cmdUrl}`);
-                    let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
-                    if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
-                        cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
-                    }
-                    if (cleanUrl.includes('://')) {
-                        if (config?.useDirect !== false) {
-                            const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-                            streams.push({ name: '🟢 ' + name, url: cleanUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
-                            directAdded = true;
-                        }
-                    }
-                } else {
-                    console.warn(`[STREAMS WARNING] Nenhuma tentativa devolveu link válido para ${id}`);
+if (typeof cmdUrl === 'string' && cmdUrl.trim() !== "") {
+    console.log(`[STREAMS] Sucesso! URL original recebido: ${cmdUrl}`);
+    let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
+    if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
+        cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
+    }
+
+    if (cleanUrl.includes('://')) {
+        if (config?.useDirect !== false) {
+            const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
+            streams.push({ name: '🟢 ' + name, url: cleanUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+            directAdded = true;
+
+            // ===== HEARTBEAT: avisa o portal que a ligação é legítima =====
+            if (type === 'tv' && config?.type === 'stalker' && auth) {
+                const hbKey = `${config.url}_${realCmd}`;
+                if (!global.heartbeatSent) global.heartbeatSent = {};
+                // Só envia 1 vez por canal em 2 minutos (evita 24 pings se o Stremio fizer 8 pedidos paralelos)
+                const lastHb = global.heartbeatSent[hbKey] || 0;
+                if (Date.now() - lastHb > 120000) {
+                    global.heartbeatSent[hbKey] = Date.now();
+                    const addonSelf = this;
+                    const sendPing = () => {
+                        try {
+                            const pingUrl = `${auth.api}type=itv&action=set_play_status&status=1&id=${encodeURIComponent(realCmd)}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+                            axios.get(pingUrl, addonSelf.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 3000 }))
+                                .then(() => console.log(`[HEARTBEAT] ✅ ${realCmd}`))
+                                .catch(() => {});
+                        } catch(e) {}
+                    };
+                    setTimeout(sendPing, 30000);
+                    setTimeout(sendPing, 60000);
+                    setTimeout(sendPing, 120000);
                 }
+            }
+        }
+    }
+} else {
+    console.warn(`[STREAMS WARNING] Nenhuma tentativa devolveu link válido para ${id}`);
+}
             }
         } catch(e) { 
             console.error(`[STREAM ERROR] Falha no processo de link Stalker para ${id}:`, e.message); 
