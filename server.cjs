@@ -468,6 +468,94 @@ function updateMasterCheckbox(groupId) {
 });
 
 // Rotas do Stremio
+app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
+    const { config, listIdx, channelId } = req.params;
+    const type = req.query.type || 'tv';
+    const lists = addon.parseConfig(config);
+    const configData = lists[listIdx];
+    if (!configData) return res.status(400).end();
+
+    const key = `${config.slice(0,20)}_${channelId}`;
+    if (!global.metaShield) global.metaShield = {};
+    const now = Date.now();
+
+    // Se já temos a URL real guardada → redireciona
+    if (global.metaShield[key + '_real'] && now - global.metaShield[key] < 60000) {
+        console.log(`[META-SHIELD] ✅ Redirecionar para o portal`);
+        return res.redirect(302, global.metaShield[key + '_real']);
+    }
+
+    // 1º pedido — cria link e busca 64KB do stream real
+    if (!global.metaShield[key]) {
+        global.metaShield[key] = now;
+        console.log(`[META-SHIELD] 1º pedido → a buscar 64KB do stream real`);
+
+        try {
+            const auth = await engine.authenticate(configData, configData.proxy);
+            if (!auth) return res.status(401).end();
+            const stalkerCmd = decodeURIComponent(channelId);
+            const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+            const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers, timeout: 5000 }));
+            let streamUrl = linkRes.data?.js?.cmd || linkRes.data?.js?.url;
+            if (!streamUrl || typeof streamUrl !== 'string') return res.status(500).end();
+            streamUrl = streamUrl.trim().replace(/^['"`]?(ffrt|ffmpeg|ffrt2|rtmp)['"`]?\s+/i, '').trim();
+            if (!streamUrl.startsWith('http')) {
+                const basePortal = configData.url.split('/c/')[0];
+                streamUrl = basePortal + (streamUrl.startsWith('/') ? '' : '/') + streamUrl;
+            }
+            global.metaShield[key + '_real'] = streamUrl;
+
+            // ===== BUSCA 64KB DO STREAM REAL =====
+            const warmHeaders = {
+                'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
+                'Referer': configData.url.replace(/\/$/, '') + '/c/',
+                'Cookie': (auth.authData.headers && auth.authData.headers['Cookie']) || '',
+                'Accept': '*/*',
+                'Connection': 'keep-alive'
+            };
+            const warmRes = await axios.get(streamUrl, { headers: warmHeaders, responseType: 'stream', timeout: 8000 });
+            let buf = Buffer.alloc(0);
+            await new Promise(r => {
+                const t = setTimeout(() => { try { warmRes.data.destroy(); } catch(e){} r(); }, 2000);
+                warmRes.data.on('data', c => {
+                    buf = Buffer.concat([buf, c]);
+                    if (buf.length >= 64 * 1024) { clearTimeout(t); try { warmRes.data.destroy(); } catch(e){} r(); }
+                });
+                warmRes.data.on('error', () => { clearTimeout(t); r(); });
+            });
+            console.log(`[META-SHIELD] ✅ Lidos ${buf.length} bytes reais → a devolver ao Tizen`);
+            res.writeHead(200, {
+                'Content-Type': 'video/mp2t',
+                'Content-Length': buf.length,
+                'Connection': 'close'
+            });
+            return res.end(buf);
+        } catch(e) {
+            console.error(`[META-SHIELD] ❌ ${e.message}`);
+            if (!res.headersSent) res.status(500).end();
+            return;
+        }
+    }
+
+    // Pedidos seguintes antes de termos URL → fake TS
+    console.log(`[META-SHIELD] A aguardar URL → fake TS`);
+    const fakeTs = Buffer.alloc(188, 0);
+    fakeTs[0] = 0x47;
+    res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Content-Length': fakeTs.length, 'Connection': 'close' });
+    return res.end(fakeTs);
+});
+
+setInterval(() => {
+    if (!global.metaShield) return;
+    const now = Date.now();
+    Object.keys(global.metaShield).forEach(k => {
+        if (typeof global.metaShield[k] === 'number' && now - global.metaShield[k] > 120000) {
+            delete global.metaShield[k];
+            delete global.metaShield[k + '_real'];
+        }
+    });
+}, 60000);
+/**
 // ===== METADATA SHIELD: responde ao metadata probe do Tizen sem tocar no portal =====
 app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
     const { config, listIdx, channelId } = req.params;
@@ -552,7 +640,7 @@ setInterval(() => {
         }
     });
 }, 60000);
-
+*/
 app.get("/:config/manifest.json", async (req, res) => {
     rememberConfig(req.params.config);
     res.json(await addon.getManifest(req.params.config));
