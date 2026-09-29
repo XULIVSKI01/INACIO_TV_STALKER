@@ -468,7 +468,7 @@ function updateMasterCheckbox(groupId) {
 });
 
 // Rotas do Stremio
-// ===== METADATA SHIELD: responde ao metadata probe do Tizen sem tocar no portal =====
+// ===== METADATA SHIELD =====
 app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
     const { config, listIdx, channelId } = req.params;
     const type = req.query.type || 'tv';
@@ -476,120 +476,68 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
     const configData = lists[listIdx];
     if (!configData) return res.status(400).end();
 
-    // Se já vimos este pedido antes (o 2º do Tizen) → redireciona para o portal real
     const key = `${config.slice(0,20)}_${channelId}`;
     if (!global.metaShield) global.metaShield = {};
     const now = Date.now();
 
     // 2º pedido em < 60s = reprodução
-if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
-    const realUrl = global.metaShield[key + '_real'];
-    if (!realUrl) return res.status(500).end();
+    if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
+        const realUrl = global.metaShield[key + '_real'];
+        if (!realUrl) return res.status(500).end();
 
-    global.metaShield[key + '_hits'] = (global.metaShield[key + '_hits'] || 0) + 1;
-    const hits = global.metaShield[key + '_hits'];
+        global.metaShield[key + '_hits'] = (global.metaShield[key + '_hits'] || 0) + 1;
+        const hits = global.metaShield[key + '_hits'];
 
-    // Hit 1: 1 único redirect (arranca à 1ª nos servidores que funcionam)
-    if (hits === 1) {
-        console.log(`[META-SHIELD] Hit 1 → redirect único (como o 1º shield)`);
+        // Hit 1: 1 único redirect (arranca à 1ª nos servidores que funcionam)
+        if (hits === 1) {
+            console.log(`[META-SHIELD] Hit 1 → redirect único`);
+            return res.redirect(302, realUrl);
+        }
+
+        // Hit 2+: pre-lock (para servidores que precisam de mais uma tentativa)
+        if (!global.metaShield[key + '_prelock']) {
+            global.metaShield[key + '_prelock'] = true;
+            (async () => {
+                try {
+                    const auth = global.metaShield[key + '_auth'] || await engine.authenticate(configData, configData.proxy);
+                    if (!auth) return;
+                    const streamHeaders = {
+                        ...auth.authData.headers,
+                        'Referer': configData.url.replace(/\/$/, '') + '/c/',
+                        'Accept': '*/*',
+                        'Connection': 'keep-alive'
+                    };
+                    const preRes = await axios.get(realUrl, { headers: streamHeaders, responseType: 'stream', timeout: 8000 });
+                    let buf = Buffer.alloc(0);
+                    const preSource = preRes.data;
+                    preSource.on('data', (chunk) => {
+                        buf = Buffer.concat([buf, chunk]);
+                        if (buf.length >= 64 * 1024) {
+                            preSource.pause();
+                            console.log(`[PRE-LOCK] Hit ${hits} → pre-lock ativo (${buf.length} bytes)`);
+                        }
+                    });
+                    preSource.on('error', () => {});
+                    global.metaShield[key + '_prelock_source'] = preSource;
+                    setTimeout(() => {
+                        try { preSource.destroy(); } catch(e) {}
+                        delete global.metaShield[key + '_prelock_source'];
+                        delete global.metaShield[key + '_prelock'];
+                    }, 60000);
+                } catch(e) {
+                    console.log(`[PRE-LOCK] Falhou: ${e.message}`);
+                }
+            })();
+        }
+
+        console.log(`[META-SHIELD] Hit ${hits} → redirect com pre-lock`);
         return res.redirect(302, realUrl);
     }
 
-    // Hit 2+: pre-lock (para servidores que precisam de mais uma tentativa)
-    if (!global.metaShield[key + '_prelock']) {
-        global.metaShield[key + '_prelock'] = true;
-        (async () => {
-            try {
-                const auth = global.metaShield[key + '_auth'] || await engine.authenticate(configData, configData.proxy);
-                if (!auth) return;
-                const streamHeaders = {
-                    ...auth.authData.headers,
-                    'Referer': configData.url.replace(/\/$/, '') + '/c/',
-                    'Accept': '*/*',
-                    'Connection': 'keep-alive'
-                };
-                const preRes = await axios.get(realUrl, { headers: streamHeaders, responseType: 'stream', timeout: 8000 });
-                let buf = Buffer.alloc(0);
-                const preSource = preRes.data;
-                preSource.on('data', (chunk) => {
-                    buf = Buffer.concat([buf, chunk]);
-                    if (buf.length >= 64 * 1024) {
-                        preSource.pause();
-                        console.log(`[PRE-LOCK] Hit ${hits} → pre-lock ativo (${buf.length} bytes)`);
-                    }
-                });
-                preSource.on('error', () => {});
-                global.metaShield[key + '_prelock_source'] = preSource;
-                setTimeout(() => {
-                    try { preSource.destroy(); } catch(e) {}
-                    delete global.metaShield[key + '_prelock_source'];
-                    delete global.metaShield[key + '_prelock'];
-                }, 60000);
-            } catch(e) {
-                console.log(`[PRE-LOCK] Falhou: ${e.message}`);
-            }
-        })();
-    }
-
-    console.log(`[META-SHIELD] Hit ${hits} → redirect com pre-lock`);
-    return res.redirect(302, realUrl);
-} 
-
-    // Hits 4+: ativa pre-lock (fallback — funciona no mold/ddnsking)
-    if (!global.metaShield[key + '_prelock']) {
-        global.metaShield[key + '_prelock'] = true;
-        (async () => {
-            try {
-                const auth = global.metaShield[key + '_auth'] || await engine.authenticate(configData, configData.proxy);
-                if (!auth) return;
-                
-                const streamHeaders = {
-                    ...auth.authData.headers,
-                    'Referer': configData.url.replace(/\/$/, '') + '/c/',
-                    'Accept': '*/*',
-                    'Connection': 'keep-alive'
-                };
-                
-                const preRes = await axios.get(realUrl, {
-                    headers: streamHeaders,
-                    responseType: 'stream',
-                    timeout: 8000
-                });
-                
-                let buf = Buffer.alloc(0);
-                const preSource = preRes.data;
-                preSource.on('data', (chunk) => {
-                    buf = Buffer.concat([buf, chunk]);
-                    if (buf.length >= 64 * 1024) {
-                        preSource.pause();
-                        console.log(`[PRE-LOCK] Hit ${hits} → pre-lock ativo (${buf.length} bytes)`);
-                    }
-                });
-                preSource.on('error', () => {});
-                
-                global.metaShield[key + '_prelock_source'] = preSource;
-                
-                setTimeout(() => {
-                    try { preSource.destroy(); } catch(e) {}
-                    delete global.metaShield[key + '_prelock_source'];
-                    delete global.metaShield[key + '_prelock'];
-                    console.log(`[PRE-LOCK] Socket fechado após 60s`);
-                }, 60000);
-                
-            } catch(e) {
-                console.log(`[PRE-LOCK] Falhou: ${e.message}`);
-            }
-        })();
-    }
-
-    console.log(`[META-SHIELD] Hit ${hits} → redirect com pre-lock`);
-    return res.redirect(302, realUrl);
-}
- 
     // 1º pedido = metadata → responde com fake TS header
     global.metaShield[key] = now;
     console.log(`[META-SHIELD] 1º pedido (metadata) → a responder localmente`);
-    
+
     // Cria o URL real do portal em background (para o 2º pedido)
     try {
         const auth = await engine.authenticate(configData, configData.proxy);
@@ -601,22 +549,20 @@ if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
             global.metaShield[key + '_auth'] = auth;
             global.metaShield[key + '_real'] = streamUrl.trim();
             global.metaShield[key + '_hits'] = 0;
-            console.log(`[META-SHIELD] URL real guardado (limpo): ${streamUrl.substring(0, 70)}...`);/*
-            global.metaShield[key + '_real'] = streamUrl;
-            console.log(`[META-SHIELD] URL real guardado: ${streamUrl.substring(0, 60)}...`);*/
+            console.log(`[META-SHIELD] URL real guardado (limpo): ${streamUrl.substring(0, 70)}...`);
         }
     } catch(e) {
         console.error(`[META-SHIELD] Erro ao criar link: ${e.message}`);
     }
 
-    // Responde com fake TS + Set-Cookie (Tizen guarda o MAC antes do playback)
+    // Responde com fake TS + Set-Cookie
     const fakeTs = Buffer.alloc(188, 0);
     fakeTs[0] = 0x47;
-    
+
     const mac = (configData.mac || '').toUpperCase();
     let cookieDomain = '';
     try { cookieDomain = new URL(configData.url).hostname; } catch(e) {}
-    
+
     res.writeHead(200, {
         'Content-Type': 'video/mp2t',
         'Content-Length': fakeTs.length,
@@ -637,11 +583,13 @@ setInterval(() => {
             delete global.metaShield[k];
             delete global.metaShield[k + '_real'];
             delete global.metaShield[k + '_auth'];
+            delete global.metaShield[k + '_hits'];
             delete global.metaShield[k + '_prelock'];
             delete global.metaShield[k + '_prelock_source'];
         }
     });
 }, 60000);
+
 /*
 // ===== METADATA SHIELD: responde ao metadata probe do Tizen sem tocar no portal =====
 app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
