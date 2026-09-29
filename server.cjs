@@ -481,12 +481,22 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
     if (!global.metaShield) global.metaShield = {};
     const now = Date.now();
 
-    // 2º pedido em < 60s = reprodução → pré-lock + redirect
+    // 2º pedido em < 60s = reprodução
 if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
     const realUrl = global.metaShield[key + '_real'];
     if (!realUrl) return res.status(500).end();
 
-    // ===== PRE-LOCK: abre ligação com headers e mantém-na parada =====
+    // Conta hits para decidir se ativa pre-lock
+    global.metaShield[key + '_hits'] = (global.metaShield[key + '_hits'] || 0) + 1;
+    const hits = global.metaShield[key + '_hits'];
+
+    // Hits 1-3: redirect puro (tentativa direct — funciona no discont/az11111)
+    if (hits <= 3) {
+        console.log(`[META-SHIELD] Hit ${hits} (≤3) → redirect puro`);
+        return res.redirect(302, realUrl);
+    }
+
+    // Hits 4+: ativa pre-lock (fallback — funciona no mold/ddnsking)
     if (!global.metaShield[key + '_prelock']) {
         global.metaShield[key + '_prelock'] = true;
         (async () => {
@@ -512,8 +522,8 @@ if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
                 preSource.on('data', (chunk) => {
                     buf = Buffer.concat([buf, chunk]);
                     if (buf.length >= 64 * 1024) {
-                        preSource.pause(); // PAUSA o socket, mantém-no aberto
-                        console.log(`[PRE-LOCK] Ligação pré-aberta com headers (${buf.length} bytes). Socket parado e mantido aberto.`);
+                        preSource.pause();
+                        console.log(`[PRE-LOCK] Hit ${hits} → pre-lock ativo (${buf.length} bytes)`);
                     }
                 });
                 preSource.on('error', () => {});
@@ -523,6 +533,7 @@ if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
                 setTimeout(() => {
                     try { preSource.destroy(); } catch(e) {}
                     delete global.metaShield[key + '_prelock_source'];
+                    delete global.metaShield[key + '_prelock'];
                     console.log(`[PRE-LOCK] Socket fechado após 60s`);
                 }, 60000);
                 
@@ -532,11 +543,9 @@ if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
         })();
     }
 
-    // Redirect normal ao portal
-    console.log(`[META-SHIELD] 2º pedido → redirect com pré-lock ativo`);
+    console.log(`[META-SHIELD] Hit ${hits} → redirect com pre-lock`);
     return res.redirect(302, realUrl);
 }
-
  /*   // 2º pedido em < 60s = reprodução → redireciona
     if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
         console.log(`[META-SHIELD] 2º pedido → a redirecionar para o portal`);
@@ -567,8 +576,8 @@ if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
 
             global.metaShield[key + '_auth'] = auth;
             global.metaShield[key + '_real'] = streamUrl;
+            global.metaShield[key + '_hits'] = 0;
             console.log(`[META-SHIELD] URL real guardado: ${streamUrl.substring(0, 60)}...`);
-            
             /*
             global.metaShield[key + '_real'] = streamUrl;
             console.log(`[META-SHIELD] URL real guardado: ${streamUrl.substring(0, 60)}...`);*/
