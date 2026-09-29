@@ -694,7 +694,7 @@ setInterval(() => {
         }
     });
 }, 60000);
-*/
+
 app.get("/:config/manifest.json", async (req, res) => {
     rememberConfig(req.params.config);
     res.json(await addon.getManifest(req.params.config));
