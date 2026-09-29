@@ -486,6 +486,61 @@ if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
     const realUrl = global.metaShield[key + '_real'];
     if (!realUrl) return res.status(500).end();
 
+    global.metaShield[key + '_hits'] = (global.metaShield[key + '_hits'] || 0) + 1;
+    const hits = global.metaShield[key + '_hits'];
+
+    // Hit 1: 1 único redirect (arranca à 1ª nos servidores que funcionam)
+    if (hits === 1) {
+        console.log(`[META-SHIELD] Hit 1 → redirect único (como o 1º shield)`);
+        return res.redirect(302, realUrl);
+    }
+
+    // Hit 2+: pre-lock (para servidores que precisam de mais uma tentativa)
+    if (!global.metaShield[key + '_prelock']) {
+        global.metaShield[key + '_prelock'] = true;
+        (async () => {
+            try {
+                const auth = global.metaShield[key + '_auth'] || await engine.authenticate(configData, configData.proxy);
+                if (!auth) return;
+                const streamHeaders = {
+                    ...auth.authData.headers,
+                    'Referer': configData.url.replace(/\/$/, '') + '/c/',
+                    'Accept': '*/*',
+                    'Connection': 'keep-alive'
+                };
+                const preRes = await axios.get(realUrl, { headers: streamHeaders, responseType: 'stream', timeout: 8000 });
+                let buf = Buffer.alloc(0);
+                const preSource = preRes.data;
+                preSource.on('data', (chunk) => {
+                    buf = Buffer.concat([buf, chunk]);
+                    if (buf.length >= 64 * 1024) {
+                        preSource.pause();
+                        console.log(`[PRE-LOCK] Hit ${hits} → pre-lock ativo (${buf.length} bytes)`);
+                    }
+                });
+                preSource.on('error', () => {});
+                global.metaShield[key + '_prelock_source'] = preSource;
+                setTimeout(() => {
+                    try { preSource.destroy(); } catch(e) {}
+                    delete global.metaShield[key + '_prelock_source'];
+                    delete global.metaShield[key + '_prelock'];
+                }, 60000);
+            } catch(e) {
+                console.log(`[PRE-LOCK] Falhou: ${e.message}`);
+            }
+        })();
+    }
+
+    console.log(`[META-SHIELD] Hit ${hits} → redirect com pre-lock`);
+    return res.redirect(302, realUrl);
+}
+    
+/*
+    // 2º pedido em < 60s = reprodução
+if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
+    const realUrl = global.metaShield[key + '_real'];
+    if (!realUrl) return res.status(500).end();
+
     // Conta hits para decidir se ativa pre-lock
     global.metaShield[key + '_hits'] = (global.metaShield[key + '_hits'] || 0) + 1;
     const hits = global.metaShield[key + '_hits'];
@@ -495,7 +550,7 @@ if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
         console.log(`[META-SHIELD] Hit ${hits} (≤3) → redirect puro`);
         return res.redirect(302, realUrl);
     }
-
+*/
     // Hits 4+: ativa pre-lock (fallback — funciona no mold/ddnsking)
     if (!global.metaShield[key + '_prelock']) {
         global.metaShield[key + '_prelock'] = true;
