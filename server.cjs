@@ -484,19 +484,13 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
         global.metaShield[key] = now;
         global.metaShield[key + '_hits'] = 0;
         global.metaShield[key + '_real'] = null;
+        global.metaShield[key + '_auth'] = null;
     }
     global.metaShield[key + '_hits'] = (global.metaShield[key + '_hits'] || 0) + 1;
     const hits = global.metaShield[key + '_hits'];
 
-    // URL vem do addon via query param 'u' → SEM create_link extra
-    const urlFromAddon = req.query.u ? decodeURIComponent(req.query.u) : null;
-    if (!global.metaShield[key + '_real'] && urlFromAddon) {
-        global.metaShield[key + '_real'] = urlFromAddon;
-        console.log(`[META-SHIELD] ✅ URL recebido do addon (0 create_link extra)`);
-    }
-
-    // Fallback: se não veio URL e é hit 1, cria (só acontece se addon antigo)
-    if (!global.metaShield[key + '_real'] && hits === 1 && !urlFromAddon) {
+    // Cria URL real e guarda auth (async, primeira vez)
+    if (!global.metaShield[key + '_real'] && hits === 1) {
         (async () => {
             try {
                 const auth = await engine.authenticate(configData, configData.proxy);
@@ -512,9 +506,10 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
                     streamUrl = basePortal + (streamUrl.startsWith('/') ? '' : '/') + streamUrl;
                 }
                 global.metaShield[key + '_real'] = streamUrl;
-                console.log(`[META-SHIELD] URL criado pelo shield (fallback)`);
+                global.metaShield[key + '_auth'] = { token: auth.token, sn: auth.authData.sn, mac: configData.mac };
+                console.log(`[META-SHIELD] URL real pronto: ${streamUrl.substring(0, 70)}...`);
             } catch(e) {
-                console.error(`[META-SHIELD] Erro: ${e.message}`);
+                console.error(`[META-SHIELD] Erro ao criar link: ${e.message}`);
             }
         })();
     }
@@ -530,24 +525,60 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
         return res.end(fakeTs);
     }
 
-    // Hit 3: 302 para o portal (SEM heartbeat)
-    if (hits === 3 && realUrl) {
-        console.log(`[META-SHIELD] Hit 3 → 302`);
-        let cookieDomain = '';
-        try { cookieDomain = new URL(realUrl).hostname; } catch(e) {}
-        const mac = (configData.mac || '').toUpperCase();
-        const cookieValue = `mac=${encodeURIComponent(mac)}`;
-        res.writeHead(302, {
-            'Location': realUrl,
-            'Set-Cookie': `${cookieValue}; Path=/; Domain=${cookieDomain}; Max-Age=600`,
-            'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
-            'Referer': configData.url.replace(/\/$/, '') + '/c/'
-        });
-        return res.end();
+    // Hit 3: 302 com Set-Cookie + agenda heartbeat get_events (comportamento de MAG real)
+if (hits === 3 && realUrl) {
+    console.log(`[META-SHIELD] Hit 3 → 302 com Set-Cookie + heartbeat`);
+
+    const authStore = global.metaShield[key + '_auth'] || {};
+    const mac = (authStore.mac || configData.mac || '').toUpperCase();
+    const token = authStore.token || '';
+    const sn = authStore.sn || '';
+    let cookieDomain = '';
+    try { cookieDomain = new URL(realUrl).hostname; } catch(e) {}
+
+    const cookieValue = `mac=${encodeURIComponent(mac)}; token=${token}; access_token=${token}`;
+
+    // ===== HEARTBEAT get_events (comando REAL de MAG durante reprodução) =====
+    const hbKey = `${key}_heartbeat`;
+    if (!global.metaShield[hbKey]) {
+        global.metaShield[hbKey] = true;
+        let pingCount = 0;
+        const portalBase = configData.url.replace(/\/c\/?$/, '').replace(/\/$/, '');
+        const eventId = decodeURIComponent(channelId);
+
+        const pingTimer = setInterval(async () => {
+            pingCount++;
+            if (pingCount > 20) {
+                clearInterval(pingTimer);
+                delete global.metaShield[hbKey];
+                return;
+            }
+            try {
+                const pingUrl = `${portalBase}/portal.php?type=stb&action=get_events&event_active_id=${encodeURIComponent(eventId)}&init=0&sn=${sn}&token=${token}&JsHttpRequest=1-0`;
+                await axios.get(pingUrl, engine.getAxiosOpts(configData, {
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
+                        'Cookie': `mac=${mac}; token=${token}; access_token=${token}`,
+                        'Referer': configData.url.replace(/\/$/, '') + '/c/'
+                    },
+                    timeout: 3000
+                })).catch(() => {});
+                if (pingCount === 1) console.log(`[HEARTBEAT] get_events #1 enviado para ${eventId}`);
+            } catch(e) {}
+        }, 15000);
     }
 
-    // Hits 4+: Tizen insiste → fake stream longo (NÃO abre nova ligação)
-    console.log(`[META-SHIELD] Hit ${hits} → fake stream`);
+    res.writeHead(302, {
+        'Location': realUrl,
+        'Set-Cookie': `${cookieValue}; Path=/; Domain=${cookieDomain}; Max-Age=600`,
+        'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
+        'Referer': configData.url.replace(/\/$/, '') + '/c/'
+    });
+    return res.end();
+}
+
+    // Hits 4+: Tizen insiste. Bloqueia com fake stream longo (não abre nova ligação ao portal)
+    console.log(`[META-SHIELD] Hit ${hits} → fake stream longo`);
     res.writeHead(200, {
         'Content-Type': 'video/mp2t',
         'Connection': 'keep-alive',
@@ -556,14 +587,15 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
     const fakeTs = Buffer.alloc(188, 0);
     fakeTs[0] = 0x47;
     res.write(fakeTs);
+
     const keepAlive = setInterval(() => {
         try { res.write(Buffer.from([0x47])); } catch(e) {}
     }, 1000);
+
     req.on('close', () => clearInterval(keepAlive));
     res.on('error', () => clearInterval(keepAlive));
     return;
 });
-
 setInterval(() => {
     if (!global.metaShield) return;
     const now = Date.now();
@@ -572,6 +604,7 @@ setInterval(() => {
             delete global.metaShield[k];
             delete global.metaShield[k + '_hits'];
             delete global.metaShield[k + '_real'];
+            delete global.metaShield[k + '_auth'];
         }
     });
 }, 60000);
