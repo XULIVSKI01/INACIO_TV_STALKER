@@ -488,13 +488,13 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
         global.metaShield[key + '_hits'] = (global.metaShield[key + '_hits'] || 0) + 1;
         const hits = global.metaShield[key + '_hits'];
 
-        // Hit 1: 1 único redirect (arranca à 1ª nos servidores que funcionam)
-        if (hits === 1) {
-            console.log(`[META-SHIELD] Hit 1 → redirect único`);
+        // Hits 1-3: redirect puro (dá 3 tentativas antes de ativar pre-lock)
+        if (hits <= 3) {
+            console.log(`[META-SHIELD] Hit ${hits}/3 → redirect puro`);
             return res.redirect(302, realUrl);
         }
 
-        // Hit 2+: pre-lock (para servidores que precisam de mais uma tentativa)
+        // Hits 4+: pre-lock (fallback para servidores que precisam de 2ª ligação autenticada)
         if (!global.metaShield[key + '_prelock']) {
             global.metaShield[key + '_prelock'] = true;
             (async () => {
@@ -534,16 +534,15 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
         return res.redirect(302, realUrl);
     }
 
-    // 1º pedido = metadata → responde com fake TS header
+    // 1º pedido = metadata
     global.metaShield[key] = now;
     console.log(`[META-SHIELD] 1º pedido (metadata) → a responder localmente`);
 
-    // Cria o URL real do portal em background (para o 2º pedido)
+    // Cria o URL real do portal em background
     try {
         const auth = await engine.authenticate(configData, configData.proxy);
         if (!auth) return res.status(401).end();
         const stalkerCmd = decodeURIComponent(channelId);
-        // Usa createStreamLink do engine (aplica extractUrl → URLs limpos)
         let streamUrl = await engine.createStreamLink(auth, configData, stalkerCmd, 'tv', null);
         if (streamUrl && streamUrl.trim()) {
             global.metaShield[key + '_auth'] = auth;
@@ -558,7 +557,6 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
     // Responde com fake TS + Set-Cookie
     const fakeTs = Buffer.alloc(188, 0);
     fakeTs[0] = 0x47;
-
     const mac = (configData.mac || '').toUpperCase();
     let cookieDomain = '';
     try { cookieDomain = new URL(configData.url).hostname; } catch(e) {}
