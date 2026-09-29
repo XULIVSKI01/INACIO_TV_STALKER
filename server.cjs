@@ -523,41 +523,56 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
             }
         } // Fim do PRE-LOCK SINCRONO
 
-        // Hits 4+: pre-lock (fallback para servidores que precisam de 2ª ligação autenticada)
-        if (!global.metaShield[key + '_prelock']) {
-            global.metaShield[key + '_prelock'] = true;
-            (async () => {
+        // Hits 4+: pre-lock + heartbeat (fecha socket mas mantém sessão STB via get_events)
+if (!global.metaShield[key + '_prelock']) {
+    global.metaShield[key + '_prelock'] = true;
+    (async () => {
+        try {
+            const auth = global.metaShield[key + '_auth'] || await engine.authenticate(configData, configData.proxy);
+            if (!auth) return;
+            const streamHeaders = {
+                ...auth.authData.headers,
+                'Referer': configData.url.replace(/\/$/, '') + '/c/',
+                'Accept': '*/*',
+                'Connection': 'keep-alive'
+            };
+            // 1) Abre, lê 64KB, FECHA IMEDIATAMENTE
+            const preRes = await axios.get(realUrl, { headers: streamHeaders, responseType: 'stream', timeout: 8000 });
+            let buf = Buffer.alloc(0);
+            await new Promise((resolve) => {
+                const t = setTimeout(resolve, 3000);
+                preRes.data.on('data', (chunk) => {
+                    buf = Buffer.concat([buf, chunk]);
+                    if (buf.length >= 64 * 1024) { clearTimeout(t); resolve(); }
+                });
+                preRes.data.on('error', () => { clearTimeout(t); resolve(); });
+            });
+            try { preRes.data.destroy(); } catch(e) {}
+            console.log(`[PRE-LOCK] ✅ ${buf.length} bytes lidos, socket fechado, a manter sessão viva por 5 min`);
+
+            // 2) get_events a cada 15s durante 5 min (mantém sessão STB)
+            const portalBase = configData.url.replace(/\/c\/?$/, '').replace(/\/$/, '');
+            const eventId = decodeURIComponent(channelId);
+            let pingCount = 0;
+            const pingTimer = setInterval(async () => {
+                pingCount++;
+                if (pingCount > 20) { clearInterval(pingTimer); return; }
                 try {
-                    const auth = global.metaShield[key + '_auth'] || await engine.authenticate(configData, configData.proxy);
-                    if (!auth) return;
-                    const streamHeaders = {
-                        ...auth.authData.headers,
-                        'Referer': configData.url.replace(/\/$/, '') + '/c/',
-                        'Accept': '*/*',
-                        'Connection': 'keep-alive'
-                    };
-                    const preRes = await axios.get(realUrl, { headers: streamHeaders, responseType: 'stream', timeout: 8000 });
-                    let buf = Buffer.alloc(0);
-                    const preSource = preRes.data;
-                    preSource.on('data', (chunk) => {
-                        buf = Buffer.concat([buf, chunk]);
-                        if (buf.length >= 64 * 1024) {
-                            preSource.pause();
-                            console.log(`[PRE-LOCK] Hit ${hits} → pre-lock ativo (${buf.length} bytes)`);
-                        }
-                    });
-                    preSource.on('error', () => {});
-                    global.metaShield[key + '_prelock_source'] = preSource;
-                    setTimeout(() => {
-                        try { preSource.destroy(); } catch(e) {}
-                        delete global.metaShield[key + '_prelock_source'];
-                        delete global.metaShield[key + '_prelock'];
-                    }, 60000);
-                } catch(e) {
-                    console.log(`[PRE-LOCK] Falhou: ${e.message}`);
-                }
-            })();
-        } // Fim do Hits 4+
+                    const pingUrl = `${auth.api}type=stb&action=get_events&event_active_id=${encodeURIComponent(eventId)}&init=0&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+                    await axios.get(pingUrl, engine.getAxiosOpts(configData, {
+                        headers: auth.authData.headers,
+                        timeout: 3000
+                    })).catch(() => {});
+                    if (pingCount === 1 || pingCount === 4 || pingCount === 8) {
+                        console.log(`[HEARTBEAT] get_events #${pingCount} enviado`);
+                    }
+                } catch(e) {}
+            }, 15000);
+        } catch(e) {
+            console.log(`[PRE-LOCK] Falhou: ${e.message}`);
+        }
+    })();
+}
 
         // ÚNICO REDIRECT (substitui os dois que existiam e fecha o IF)
         console.log(`[META-SHIELD] Hit ${hits} → redirect efetuado`);
