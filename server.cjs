@@ -7,6 +7,38 @@ const { spawn } = require('child_process');
 const engine = require("./stalkerengine.cjs");
 const addon = require("./addon.cjs");
 
+// ===== LIMPA URLs MANGLED DO PORTAL =====
+function extractUrlFix(jsData) {
+    if (!jsData) return null;
+    let url = jsData?.cmd || jsData?.url || (typeof jsData === 'string' ? jsData : null);
+    if (!url && typeof jsData === 'object') {
+        url = Object.values(jsData).find(v => typeof v === 'string' && (v.startsWith('http') || v.includes('://')));
+    }
+    if (!url) return null;
+
+    url = url.trim().replace(/^['"`]?(ffrt|ffmpeg|ffrt2|rtmp)['"`]?\s+/i, "").trim();
+    url = url.replace(/[\s\t\r\n]+/g, "");
+
+    try {
+        const u = new URL(url);
+        const parts = u.pathname.split('/').filter(Boolean);
+        const domainLikeRe = /^[a-z0-9-]+(\.[a-z0-9-]+)+(:\d+)?$/i;
+
+        for (let i = 1; i < parts.length - 1; i++) {
+            if (domainLikeRe.test(parts[i]) && parts[i + 1] === parts[0]) {
+                const last = parts[parts.length - 1];
+                const fixedPath = '/' + [...parts.slice(0, i), last].join('/');
+                const fixedUrl = `${u.protocol}//${u.host}${fixedPath}${u.search}`;
+                console.log(`[URL FIX] ${fixedUrl}`);
+                return fixedUrl;
+            }
+        }
+        return url;
+    } catch(e) {
+        return url;
+    }
+}
+
 // ============================================================
 // KEEP-ALIVE: mantém a sessão do portal viva (como um MAG real)
 // ============================================================
