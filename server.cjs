@@ -515,13 +515,19 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
         console.error(`[META-SHIELD] Erro ao criar link: ${e.message}`);
     }
 
-    // Responde com fake TS bytes (sync byte 0x47 + 187 bytes de zeros = 1 packet TS válido)
+    // Responde com fake TS + Set-Cookie (Tizen guarda o MAC antes do playback)
     const fakeTs = Buffer.alloc(188, 0);
-    fakeTs[0] = 0x47; // Sync byte de um pacote MPEG-TS
+    fakeTs[0] = 0x47;
+    
+    const mac = (configData.mac || '').toUpperCase();
+    let cookieDomain = '';
+    try { cookieDomain = new URL(configData.url).hostname; } catch(e) {}
+    
     res.writeHead(200, {
         'Content-Type': 'video/mp2t',
         'Content-Length': fakeTs.length,
-        'Connection': 'close'
+        'Connection': 'close',
+        'Set-Cookie': `mac=${encodeURIComponent(mac)}; Path=/; Domain=${cookieDomain}; Max-Age=600`
     });
     res.end(fakeTs);
 });
