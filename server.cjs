@@ -533,24 +533,8 @@ if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
 
     console.log(`[META-SHIELD] Hit ${hits} → redirect com pre-lock`);
     return res.redirect(302, realUrl);
-}
-    
-/*
-    // 2º pedido em < 60s = reprodução
-if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
-    const realUrl = global.metaShield[key + '_real'];
-    if (!realUrl) return res.status(500).end();
+} 
 
-    // Conta hits para decidir se ativa pre-lock
-    global.metaShield[key + '_hits'] = (global.metaShield[key + '_hits'] || 0) + 1;
-    const hits = global.metaShield[key + '_hits'];
-
-    // Hits 1-3: redirect puro (tentativa direct — funciona no discont/az11111)
-    if (hits <= 3) {
-        console.log(`[META-SHIELD] Hit ${hits} (≤3) → redirect puro`);
-        return res.redirect(302, realUrl);
-    }
-*/
     // Hits 4+: ativa pre-lock (fallback — funciona no mold/ddnsking)
     if (!global.metaShield[key + '_prelock']) {
         global.metaShield[key + '_prelock'] = true;
@@ -601,15 +585,7 @@ if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
     console.log(`[META-SHIELD] Hit ${hits} → redirect com pre-lock`);
     return res.redirect(302, realUrl);
 }
- /*   // 2º pedido em < 60s = reprodução → redireciona
-    if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
-        console.log(`[META-SHIELD] 2º pedido → a redirecionar para o portal`);
-        // Devolve 302 para o URL real do portal
-        const realUrl = global.metaShield[key + '_real'];
-        if (realUrl) return res.redirect(302, realUrl);
-        return res.status(500).end();
-    }
-    */
+ 
     // 1º pedido = metadata → responde com fake TS header
     global.metaShield[key] = now;
     console.log(`[META-SHIELD] 1º pedido (metadata) → a responder localmente`);
@@ -666,19 +642,6 @@ setInterval(() => {
         }
     });
 }, 60000);
-
-/*
-// Limpeza do metaShield a cada minuto
-setInterval(() => {
-    if (!global.metaShield) return;
-    const now = Date.now();
-    Object.keys(global.metaShield).forEach(k => {
-        if (typeof global.metaShield[k] === 'number' && now - global.metaShield[k] > 120000) {
-            delete global.metaShield[k];
-            delete global.metaShield[k + '_real'];
-        }
-    });
-}, 60000);*/
 /*
 // ===== METADATA SHIELD: responde ao metadata probe do Tizen sem tocar no portal =====
 app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
