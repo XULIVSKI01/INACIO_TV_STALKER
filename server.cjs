@@ -481,18 +481,51 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
     const now = Date.now();
 
     // 2º pedido em < 60s = reprodução
-    if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
-        const realUrl = global.metaShield[key + '_real'];
-        if (!realUrl) return res.status(500).end();
+if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
+    const realUrl = global.metaShield[key + '_real'];
+    if (!realUrl) return res.status(500).end();
 
-        global.metaShield[key + '_hits'] = (global.metaShield[key + '_hits'] || 0) + 1;
-        const hits = global.metaShield[key + '_hits'];
+    global.metaShield[key + '_hits'] = (global.metaShield[key + '_hits'] || 0) + 1;
+    const hits = global.metaShield[key + '_hits'];
 
-        // Hits 1-3: redirect puro (dá 3 tentativas antes de ativar pre-lock)
-        if (hits <= 3) {
-            console.log(`[META-SHIELD] Hit ${hits}/3 → redirect puro`);
-            return res.redirect(302, realUrl);
+    // ===== PRE-LOCK SINCRONO (só 1 vez por sessão) =====
+    if (!global.metaShield[key + '_prelock_done']) {
+        console.log(`[META-SHIELD] Hit ${hits} → pre-lock sincrono (a aquecer portal)`);
+        try {
+            const auth = global.metaShield[key + '_auth'] || await engine.authenticate(configData, configData.proxy);
+            if (auth) {
+                const streamHeaders = {
+                    ...auth.authData.headers,
+                    'Referer': configData.url.replace(/\/$/, '') + '/c/',
+                    'Accept': '*/*',
+                    'Connection': 'keep-alive'
+                };
+                const preRes = await axios.get(realUrl, { headers: streamHeaders, responseType: 'stream', timeout: 8000 });
+                let buf = Buffer.alloc(0);
+                await new Promise((resolve) => {
+                    const t = setTimeout(resolve, 3000);
+                    preRes.data.on('data', (chunk) => {
+                        buf = Buffer.concat([buf, chunk]);
+                        if (buf.length >= 64 * 1024) {
+                            clearTimeout(t);
+                            preRes.data.pause();
+                            resolve();
+                        }
+                    });
+                    preRes.data.on('error', () => { clearTimeout(t); resolve(); });
+                });
+                global.metaShield[key + '_prelock_source'] = preRes.data;
+                global.metaShield[key + '_prelock_done'] = true;
+                console.log(`[PRE-LOCK] ✅ ${buf.length} bytes lidos — portal quente`);
+            }
+        } catch(e) {
+            console.log(`[PRE-LOCK] Falhou: ${e.message}`);
         }
+    }
+
+    console.log(`[META-SHIELD] Hit ${hits} → redirect (portal já quente)`);
+    return res.redirect(302, realUrl);
+}
 
         // Hits 4+: pre-lock (fallback para servidores que precisam de 2ª ligação autenticada)
         if (!global.metaShield[key + '_prelock']) {
