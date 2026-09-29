@@ -468,6 +468,7 @@ function updateMasterCheckbox(groupId) {
 });
 
 // Rotas do Stremio
+/*
 app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
     const { config, listIdx, channelId } = req.params;
     const type = req.query.type || 'tv';
@@ -608,7 +609,7 @@ setInterval(() => {
         }
     });
 }, 60000);
-/**
+*/
 // ===== METADATA SHIELD: responde ao metadata probe do Tizen sem tocar no portal =====
 app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
     const { config, listIdx, channelId } = req.params;
