@@ -481,7 +481,63 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
     if (!global.metaShield) global.metaShield = {};
     const now = Date.now();
 
-    // 2º pedido em < 60s = reprodução → redireciona
+    // 2º pedido em < 60s = reprodução → pré-lock + redirect
+if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
+    const realUrl = global.metaShield[key + '_real'];
+    if (!realUrl) return res.status(500).end();
+
+    // ===== PRE-LOCK: abre ligação com headers e mantém-na parada =====
+    if (!global.metaShield[key + '_prelock']) {
+        global.metaShield[key + '_prelock'] = true;
+        (async () => {
+            try {
+                const auth = global.metaShield[key + '_auth'] || await engine.authenticate(configData, configData.proxy);
+                if (!auth) return;
+                
+                const streamHeaders = {
+                    ...auth.authData.headers,
+                    'Referer': configData.url.replace(/\/$/, '') + '/c/',
+                    'Accept': '*/*',
+                    'Connection': 'keep-alive'
+                };
+                
+                const preRes = await axios.get(realUrl, {
+                    headers: streamHeaders,
+                    responseType: 'stream',
+                    timeout: 8000
+                });
+                
+                let buf = Buffer.alloc(0);
+                const preSource = preRes.data;
+                preSource.on('data', (chunk) => {
+                    buf = Buffer.concat([buf, chunk]);
+                    if (buf.length >= 64 * 1024) {
+                        preSource.pause(); // PAUSA o socket, mantém-no aberto
+                        console.log(`[PRE-LOCK] Ligação pré-aberta com headers (${buf.length} bytes). Socket parado e mantido aberto.`);
+                    }
+                });
+                preSource.on('error', () => {});
+                
+                global.metaShield[key + '_prelock_source'] = preSource;
+                
+                setTimeout(() => {
+                    try { preSource.destroy(); } catch(e) {}
+                    delete global.metaShield[key + '_prelock_source'];
+                    console.log(`[PRE-LOCK] Socket fechado após 60s`);
+                }, 60000);
+                
+            } catch(e) {
+                console.log(`[PRE-LOCK] Falhou: ${e.message}`);
+            }
+        })();
+    }
+
+    // Redirect normal ao portal
+    console.log(`[META-SHIELD] 2º pedido → redirect com pré-lock ativo`);
+    return res.redirect(302, realUrl);
+}
+
+ /*   // 2º pedido em < 60s = reprodução → redireciona
     if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
         console.log(`[META-SHIELD] 2º pedido → a redirecionar para o portal`);
         // Devolve 302 para o URL real do portal
@@ -489,11 +545,11 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
         if (realUrl) return res.redirect(302, realUrl);
         return res.status(500).end();
     }
-
+    */
     // 1º pedido = metadata → responde com fake TS header
     global.metaShield[key] = now;
     console.log(`[META-SHIELD] 1º pedido (metadata) → a responder localmente`);
-
+    
     // Cria o URL real do portal em background (para o 2º pedido)
     try {
         const auth = await engine.authenticate(configData, configData.proxy);
@@ -508,8 +564,14 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
                 const basePortal = configData.url.split('/c/')[0];
                 streamUrl = basePortal + (streamUrl.startsWith('/') ? '' : '/') + streamUrl;
             }
+
+            global.metaShield[key + '_auth'] = auth;
             global.metaShield[key + '_real'] = streamUrl;
             console.log(`[META-SHIELD] URL real guardado: ${streamUrl.substring(0, 60)}...`);
+            
+            /*
+            global.metaShield[key + '_real'] = streamUrl;
+            console.log(`[META-SHIELD] URL real guardado: ${streamUrl.substring(0, 60)}...`);*/
         }
     } catch(e) {
         console.error(`[META-SHIELD] Erro ao criar link: ${e.message}`);
@@ -532,6 +594,24 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
     res.end(fakeTs);
 });
 
+setInterval(() => {
+    if (!global.metaShield) return;
+    const now = Date.now();
+    Object.keys(global.metaShield).forEach(k => {
+        if (typeof global.metaShield[k] === 'number' && now - global.metaShield[k] > 120000) {
+            if (global.metaShield[k + '_prelock_source'] && global.metaShield[k + '_prelock_source'].destroy) {
+                try { global.metaShield[k + '_prelock_source'].destroy(); } catch(e) {}
+            }
+            delete global.metaShield[k];
+            delete global.metaShield[k + '_real'];
+            delete global.metaShield[k + '_auth'];
+            delete global.metaShield[k + '_prelock'];
+            delete global.metaShield[k + '_prelock_source'];
+        }
+    });
+}, 60000);
+
+/*
 // Limpeza do metaShield a cada minuto
 setInterval(() => {
     if (!global.metaShield) return;
@@ -542,7 +622,7 @@ setInterval(() => {
             delete global.metaShield[k + '_real'];
         }
     });
-}, 60000);
+}, 60000);*/
 /*
 // ===== METADATA SHIELD: responde ao metadata probe do Tizen sem tocar no portal =====
 app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
