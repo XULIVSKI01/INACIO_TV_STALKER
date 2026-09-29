@@ -703,9 +703,39 @@ const addon = {
     let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
     if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
         cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
-    }    
+    }  
 
-    if (cleanUrl.includes('://')) {
+     if (cleanUrl.includes('://')) {
+    if (config?.useDirect !== false) {
+        const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
+        
+        const mac = (config.mac || '').toUpperCase();
+        const referer = config.url.replace(/\/$/, '') + '/c/';
+        
+        // proxyHeaders SEM Cookie — só User-Agent + Referer (estáticos, não consomem token)
+        streams.push({
+            name: '🟢 ' + name,
+            url: cleanUrl,
+            title: titleStr,
+            behaviorHints: {
+                notWebReady: type === 'tv',
+                proxyHeaders: {
+                    request: {
+                        'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
+                        'X-User-Agent': `Model: MAG250; SW: 2.18-r14-pub-250; STB_active: true; Device ID: ${mac}; Signature: 88e76854; SN: ${mac}`,
+                        'Referer': referer,
+                        'Accept': '*/*'
+                    }
+                }
+            },
+            contentType: type === 'tv' ? 'video/mp2t' : undefined
+        });
+        directAdded = true;
+    }
+     }
+
+   /*
+   if (cleanUrl.includes('://')) {
     if (config?.useDirect !== false) {
         const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
         const shieldUrl = `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(realCmd)}?type=${type}`;
@@ -713,6 +743,7 @@ const addon = {
         directAdded = true;
     }
   }
+  */
 } else {
     console.warn(`[STREAMS WARNING] Nenhuma tentativa devolveu link válido para ${id}`);
 }
