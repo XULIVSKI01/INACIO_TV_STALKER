@@ -564,21 +564,13 @@ if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
         const auth = await engine.authenticate(configData, configData.proxy);
         if (!auth) return res.status(401).end();
         const stalkerCmd = decodeURIComponent(channelId);
-        const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
-        const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers, timeout: 5000 }));
-        let streamUrl = linkRes.data?.js?.cmd || linkRes.data?.js?.url;
-        if (streamUrl) {
-            streamUrl = streamUrl.trim().replace(/^['"`]?(ffrt|ffmpeg|ffrt2|rtmp)['"`]?\s+/i, '').trim();
-            if (!streamUrl.startsWith('http')) {
-                const basePortal = configData.url.split('/c/')[0];
-                streamUrl = basePortal + (streamUrl.startsWith('/') ? '' : '/') + streamUrl;
-            }
-
+        // Usa createStreamLink do engine (aplica extractUrl → URLs limpos)
+        let streamUrl = await engine.createStreamLink(auth, configData, stalkerCmd, 'tv', null);
+        if (streamUrl && streamUrl.trim()) {
             global.metaShield[key + '_auth'] = auth;
-            global.metaShield[key + '_real'] = streamUrl;
+            global.metaShield[key + '_real'] = streamUrl.trim();
             global.metaShield[key + '_hits'] = 0;
-            console.log(`[META-SHIELD] URL real guardado: ${streamUrl.substring(0, 60)}...`);
-            /*
+            console.log(`[META-SHIELD] URL real guardado (limpo): ${streamUrl.substring(0, 70)}...`);/*
             global.metaShield[key + '_real'] = streamUrl;
             console.log(`[META-SHIELD] URL real guardado: ${streamUrl.substring(0, 60)}...`);*/
         }
