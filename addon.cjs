@@ -708,11 +708,12 @@ const addon = {
    if (cleanUrl.includes('://')) {
     if (config?.useDirect !== false) {
         const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
+        // Usa META-SHIELD para forçar 1 só ligação ao portal
         const shieldUrl = `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(realCmd)}?type=${type}`;
         streams.push({ name: '🟢 ' + name, url: shieldUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
         directAdded = true;
     }
-  }
+   }
   
 } else {
     console.warn(`[STREAMS WARNING] Nenhuma tentativa devolveu link válido para ${id}`);
