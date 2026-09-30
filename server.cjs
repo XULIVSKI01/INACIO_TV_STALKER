@@ -666,18 +666,59 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
     if (!global.metaShield) global.metaShield = {};
     const now = Date.now();
 
-    // Se já redirecionámos 1 vez, deixamos o Tizen "preso" com fake TS para ele não reabrir
 if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
     const redirectCount = global.metaShield[key + '_redirects'] || 0;
     const realUrl = global.metaShield[key + '_real'];
 
-    if (redirectCount < 1 && realUrl) {
-        global.metaShield[key + '_redirects'] = redirectCount + 1;
-        console.log(`[META-SHIELD] Redirecionar #${redirectCount + 1} → portal`);
+    // Se o URL ainda não está pronto → fake TS
+    if (!realUrl) {
+        console.log(`[META-SHIELD] URL não pronto (${redirectCount + 1}º) → fake TS`);
+        const fakeTs = Buffer.alloc(188, 0);
+        fakeTs[0] = 0x47;
+        res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Content-Length': fakeTs.length, 'Connection': 'close' });
+        return res.end(fakeTs);
+    }
+
+    // No primeiro redirect: PRE-LOCK sincrono (aquece portal) + redirect
+    if (redirectCount < 1) {
+        global.metaShield[key + '_redirects'] = 1;
+
+        // PRE-LOCK SÍNCRONO (a única adição)
+        if (!global.metaShield[key + '_prelock_done']) {
+            global.metaShield[key + '_prelock_done'] = true;
+            console.log(`[META-SHIELD] Pre-lock sincrono a aquecer portal`);
+            try {
+                const auth = global.metaShield[key + '_auth'];
+                if (auth) {
+                    const streamHeaders = {
+                        ...auth.authData.headers,
+                        'Referer': configData.url.replace(/\/$/, '') + '/c/',
+                        'Accept': '*/*',
+                        'Connection': 'keep-alive'
+                    };
+                    const preRes = await axios.get(realUrl, { headers: streamHeaders, responseType: 'stream', timeout: 8000 });
+                    let buf = Buffer.alloc(0);
+                    await new Promise((resolve) => {
+                        const t = setTimeout(resolve, 3000);
+                        preRes.data.on('data', (chunk) => {
+                            buf = Buffer.concat([buf, chunk]);
+                            if (buf.length >= 64 * 1024) { clearTimeout(t); resolve(); }
+                        });
+                        preRes.data.on('error', () => { clearTimeout(t); resolve(); });
+                    });
+                    try { preRes.data.destroy(); } catch(e) {}
+                    console.log(`[PRE-LOCK] ✅ ${buf.length} bytes lidos — portal quente`);
+                }
+            } catch(e) {
+                console.log(`[PRE-LOCK] Falhou: ${e.message}`);
+            }
+        }
+
+        console.log(`[META-SHIELD] Redirecionar #1 → portal (já quente)`);
         return res.redirect(302, realUrl);
     }
 
-    // Já redirecionámos antes → Tizen está a insistir, damos fake TS para desistir
+    // Já redirecionámos → bloqueia com fake TS
     console.log(`[META-SHIELD] Tizen insistiu (${redirectCount + 1}º) → fake TS`);
     const fakeTs = Buffer.alloc(188, 0);
     fakeTs[0] = 0x47;
@@ -699,12 +740,12 @@ if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
         if (!auth) return res.status(401).end();
         const stalkerCmd = decodeURIComponent(channelId);
         const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
-const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers, timeout: 5000 }));
+        const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers, timeout: 5000 }));
 
-// Aplica a limpeza (corrige URLs mangled como crystalott)
-let streamUrl = extractUrlFix(linkRes.data?.js);
+        let streamUrl = extractUrlFix(linkRes.data?.js);
 
 if (streamUrl && streamUrl.trim()) {
+    global.metaShield[key + '_auth'] = auth;                      // ← NOVA LINHA
     global.metaShield[key + '_real'] = streamUrl.trim();
     console.log(`[META-SHIELD] URL real guardado (limpo): ${streamUrl.substring(0, 70)}...`);
 }
