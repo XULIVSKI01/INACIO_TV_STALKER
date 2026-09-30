@@ -6,7 +6,7 @@ const { PassThrough } = require('stream');
 const { spawn } = require('child_process');
 const engine = require("./stalkerengine.cjs");
 const addon = require("./addon.cjs");
-
+/*
 // ===== LIMPA URLs MANGLED DO PORTAL =====
 function extractUrlFix(jsData) {
     if (!jsData) return null;
@@ -38,7 +38,7 @@ function extractUrlFix(jsData) {
         return url;
     }
 }
-
+*/
 // ============================================================
 // KEEP-ALIVE: mantém a sessão do portal viva (como um MAG real)
 // ============================================================
