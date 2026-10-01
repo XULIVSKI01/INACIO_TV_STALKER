@@ -529,7 +529,7 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
                 if (auth) {
                     const streamHeaders = {
                         ...auth.authData.headers,
-                        'Referer': configData.url.replace(/\/$/, '') + '/c/',*/
+                        'Referer': configData.url.replace(/\/$/, '') + '/c/',
                         'Accept': '*/*',
                         'Connection': 'keep-alive'
                     };
@@ -565,7 +565,7 @@ if (!global.metaShield[key + '_prelock']) {
             if (!auth) return;
             const streamHeaders = {
                 ...auth.authData.headers,
-                'Referer': configData.url.replace(/\/$/, '') + '/c/',*/
+                'Referer': configData.url.replace(/\/$/, '') + '/c/',
                 'Accept': '*/*',
                 'Connection': 'keep-alive'
             };
