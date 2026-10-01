@@ -500,7 +500,7 @@ function updateMasterCheckbox(groupId) {
 });
 
 // Rotas do Stremio
-/*
+
 // ===== METADATA SHIELD =====
 app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
     const { config, listIdx, channelId } = req.params;
@@ -530,8 +530,8 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
                     const streamHeaders = {
                         ...auth.authData.headers,
                         'Referer': configData.url.replace(/\/$/, '') + '/c/',*/
-                       // 'Accept': '*/*',
-                     /*   'Connection': 'keep-alive'
+                        'Accept': '*/*',
+                        'Connection': 'keep-alive'
                     };
                     const preRes = await axios.get(realUrl, { headers: streamHeaders, responseType: 'stream', timeout: 8000 });
                     let buf = Buffer.alloc(0);
@@ -566,8 +566,8 @@ if (!global.metaShield[key + '_prelock']) {
             const streamHeaders = {
                 ...auth.authData.headers,
                 'Referer': configData.url.replace(/\/$/, '') + '/c/',*/
-               // 'Accept': '*/*',
-              /*  'Connection': 'keep-alive'
+                'Accept': '*/*',
+                'Connection': 'keep-alive'
             };
             const preRes = await axios.get(realUrl, { headers: streamHeaders, responseType: 'stream', timeout: 8000 });
             let buf = Buffer.alloc(0);
@@ -650,9 +650,9 @@ setInterval(() => {
         }
     });
 }, 60000);
-*/
 
 
+/*
 // ===== METADATA SHIELD: responde ao metadata probe do Tizen sem tocar no portal =====
 app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
     const { config, listIdx, channelId } = req.params;
@@ -735,7 +735,7 @@ setInterval(() => {
         }
     });
 }, 60000);
-
+*/
 app.get("/:config/manifest.json", async (req, res) => {
     rememberConfig(req.params.config);
     res.json(await addon.getManifest(req.params.config));
