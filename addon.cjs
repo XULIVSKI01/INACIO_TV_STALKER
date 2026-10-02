@@ -622,16 +622,17 @@ const addon = {
     let directAdded = false;
 
     if (config?.type === 'xtream') {
-        if (config?.useDirect !== false) {
-            const b = config.url.trim().replace(/\/$/, "");
-            if (type === 'tv') {
-                streams.push({ name: name, url: `${b}/${config.user}/${config.pass}/${sId}`, title: `📺 Directo TV`, behaviorHints: { notWebReady: true }, contentType: 'video/mp2t' });
-            } else if (type === 'movie') {
-                streams.push({ name: name, url: `${b}/movie/${config.user}/${config.pass}/${sId}`, title: `🎬 Directo Filme`, behaviorHints: { notWebReady: false } });
-            } else if (type === 'series') {
-                streams.push({ name: name, url: `${b}/series/${config.user}/${config.pass}/${sId}`, title: `🍿 Directo Série - ${name}`, behaviorHints: { notWebReady: false } });
-            }
+    if (config?.useDirect !== false) {
+        const shieldUrl = `https://${host}/meta-xtream/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(sId)}?type=${type}`;
+        if (type === 'tv') {
+            streams.push({ name: name, url: shieldUrl, title: `📺 Directo TV`, behaviorHints: { notWebReady: true }, contentType: 'video/mp2t' });
+        } else if (type === 'movie') {
+            streams.push({ name: name, url: shieldUrl, title: `🎬 Directo Filme`, behaviorHints: { notWebReady: false } });
+        } else if (type === 'series') {
+            streams.push({ name: name, url: shieldUrl, title: `🍿 Directo Série - ${name}`, behaviorHints: { notWebReady: false } });
         }
+    }
+
     } else if (config?.type === 'm3u') {
         const url = decodeURIComponent(sId);
         if (config?.useDirect !== false) {
