@@ -58,7 +58,6 @@ function rememberConfig(configB64) {
 }
 
 async function sendKeepAlive(list) {
-async function sendKeepAlive(list) {
     try {
         const auth = await engine.authenticate(list, list.proxy);
         if (!auth || !auth.api || !auth.token) return false;
