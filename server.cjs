@@ -53,7 +53,7 @@ function rememberConfig(configB64) {
         global.recentConfigs.delete(first);
     }
 }
-
+/*
 // Um único envio de get_events (mantém sessão viva)
 async function sendKeepAlive(list) {
     try {
@@ -92,10 +92,38 @@ setInterval(async () => {
                 if (ok) {
                     console.log(`[KEEPALIVE] ✅ ${list.name || list.url} — sessão viva`);
                 }
-            }
-        } catch(e) { /* ignorar */ }
+            } */
+      //  } catch(e) { /* ignorar */ } 
+ //   }
+// }, 2 * 60 * 1000);   // 2 minutos
+
+// ============================================================
+// GET_CHANNEL_STATUS — só quando há canal ativo
+// (leve, não faz handshake — usa sessão já autenticada)
+// ============================================================
+if (!global.activeChannels) global.activeChannels = {};
+
+setInterval(async () => {
+    const agora = Date.now();
+    for (const key of Object.keys(global.activeChannels)) {
+        const entry = global.activeChannels[key];
+        // Expira após 90s sem nova abertura
+        if (!entry || agora - entry.ts > 90000) {
+            delete global.activeChannels[key];
+            continue;
+        }
+        try {
+            const auth = await engine.authenticate(entry.config, entry.config.proxy);
+            if (!auth || !auth.api || !auth.token) continue;
+
+            const chUrl = `${auth.api}type=itv&action=get_channel_status&ch_id=${encodeURIComponent(entry.channelId)}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+            await axios.get(chUrl, engine.getAxiosOpts(entry.config, {
+                headers: auth.authData.headers,
+                timeout: 3000
+            })).catch(() => {});
+        } catch (e) { /* silencioso */ }
     }
-}, 2 * 60 * 1000);   // 2 minutos
+}, 45000);  // a cada 45s
 
 const PORT = process.env.PORT || 7860;
 const app = express();
@@ -705,7 +733,16 @@ const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { heade
 let streamUrl = extractUrlFix(linkRes.data?.js);
 
 if (streamUrl && streamUrl.trim()) {
+    global.metaShield[key + '_auth'] = auth;
     global.metaShield[key + '_real'] = streamUrl.trim();
+    global.metaShield[key + '_hits'] = 0;
+    // Regista canal ativo para get_channel_status
+    const activeKey = `${configData.url}_${configData.mac || ''}`;
+    global.activeChannels[activeKey] = {
+        channelId: channelId,
+        ts: Date.now(),
+        config: configData
+    };
     console.log(`[META-SHIELD] URL real guardado (limpo): ${streamUrl.substring(0, 70)}...`);
 }
     } catch(e) {
