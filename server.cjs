@@ -7,6 +7,9 @@ const { spawn } = require('child_process');
 const engine = require("./stalkerengine.cjs");
 const addon = require("./addon.cjs");
 
+// Guarda o canal ativo por portal+MAC (para get_channel_status no keep-alive)
+if (!global.activeChannels) global.activeChannels = {};
+
 // ===== LIMPA URLs MANGLED DO PORTAL =====
 function extractUrlFix(jsData) {
     if (!jsData) return null;
@@ -54,19 +57,19 @@ function rememberConfig(configB64) {
     }
 }
 
-// Um único envio de get_events (mantém sessão viva)
+async function sendKeepAlive(list) {
 async function sendKeepAlive(list) {
     try {
         const auth = await engine.authenticate(list, list.proxy);
         if (!auth || !auth.api || !auth.token) return false;
 
+        // 1) get_events — mantém sessão STB viva
         const url = `${auth.api}type=stb&action=get_events&event_active_id=0&init=0&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
         const res = await axios.get(url, engine.getAxiosOpts(list, {
             headers: auth.authData.headers,
             timeout: 4000
         }));
 
-        // Se o portal devolveu novo token, atualiza a cache
         const newToken = res.data?.js?.token;
         if (newToken && newToken !== auth.token) {
             auth.token = newToken;
@@ -75,12 +78,24 @@ async function sendKeepAlive(list) {
             auth.authData.headers.Cookie = auth.authData.headers.Cookie.replace(/access_token=[^;]+/, `access_token=${newToken}`);
         }
 
+        // 2) get_channel_status — se há canal ativo nos últimos 2 min
+        const activeKey = `${list.url}_${list.mac}_active`;
+        const active = global.activeChannels && global.activeChannels[activeKey];
+        if (active && Date.now() - active.ts < 120000) {
+            try {
+                const chUrl = `${auth.api}type=itv&action=get_channel_status&ch_id=${encodeURIComponent(active.channelId)}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+                await axios.get(chUrl, engine.getAxiosOpts(list, {
+                    headers: auth.authData.headers,
+                    timeout: 3000
+                })).catch(() => {});
+            } catch (e) { /* silencioso */ }
+        }
+
         return true;
     } catch (e) {
         return false;
     }
 }
-
 // Loop background — a cada 2 minutos para cada portal conhecido
 setInterval(async () => {
     for (const cfgB64 of global.recentConfigs) {
@@ -727,8 +742,12 @@ let streamUrl = extractUrlFix(linkRes.data?.js);
 
 if (streamUrl && streamUrl.trim()) {
     global.metaShield[key + '_real'] = streamUrl.trim();
+    // Guarda canal ativo para o keep-alive (timestamp, sem cleanup)
+    const activeKey = `${configData.url}_${configData.mac}_active`;
+    global.activeChannels[activeKey] = { channelId: channelId, ts: Date.now() };
     console.log(`[META-SHIELD] URL real guardado (limpo): ${streamUrl.substring(0, 70)}...`);
 }
+    
     } catch(e) {
         console.error(`[META-SHIELD] Erro ao criar link: ${e.message}`);
     }
