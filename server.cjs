@@ -227,11 +227,32 @@ app.get("/configure", (req, res) => {
                                 <input type="text" class="mac" placeholder="00:1A:79:XX:XX:XX">
                                 <label>BOX MODEL</label>
                                 <select class="model">
-                                    <option value="MAG250">MAG 250</option>
-                                    <option value="MAG254">MAG 254</option>
-                                    <option value="MAG256">MAG 256</option>
-                                    <option value="MAG322">MAG 322</option>
-                                </select>
+    <optgroup label="MAG Antigos">
+        <option value="MAG245">MAG 245</option>
+        <option value="MAG250" selected>MAG 250 (recomendado)</option>
+        <option value="MAG254">MAG 254</option>
+        <option value="MAG255">MAG 255</option>
+    </optgroup>
+    <optgroup label="MAG Intermédios">
+        <option value="MAG256">MAG 256</option>
+        <option value="MAG257">MAG 257</option>
+        <option value="MAG270">MAG 270</option>
+        <option value="MAG275">MAG 275</option>
+    </optgroup>
+    <optgroup label="MAG HD">
+        <option value="MAG322">MAG 322</option>
+        <option value="MAG324">MAG 324</option>
+    </optgroup>
+    <optgroup label="MAG 4K">
+        <option value="MAG349">MAG 349</option>
+        <option value="MAG351">MAG 351</option>
+        <option value="MAG352">MAG 352</option>
+        <option value="MAG420">MAG 420</option>
+        <option value="MAG424">MAG 424</option>
+        <option value="MAG425">MAG 425</option>
+        <option value="MAG520">MAG 520</option>
+    </optgroup>
+</select>
                                 <span class="adv-toggle" onclick="toggleAdv('\${id}')">Configurações Avançadas</span>
                                 <div class="advanced" id="adv-\${id}">
                                     <label>SERIAL NUMBER (SN)</label><input type="text" class="sn">
