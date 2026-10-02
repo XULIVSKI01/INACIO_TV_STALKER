@@ -158,7 +158,7 @@ async function authenticate(config, proxyUrl = null) {
 async function createStreamLink(auth, config, stalkerCmd, type, sNum = null) {
     const cmdType = (type === "movie" || type === "series") ? "vod" : "itv";
     const seriesParam = sNum ? `&series=${sNum}` : '';
-    const chCheck = type === "tv" ? "&force_ch_link_check=1" : "";
+    const chCheck = "";  // MAG não envia force_ch_link_check no 1º pedido
     const realCmd = stalkerCmd;
 
     const opts = getAxiosOpts(config, { headers: auth.authData.headers, timeout: 5000 }, config.proxy);
