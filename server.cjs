@@ -680,14 +680,20 @@ app.get("/meta-xtream/:config/:listIdx/:channelId", async (req, res) => {
 
     // Constrói URL real Xtream
     const baseUrl = configData.url.replace(/\/$/, "");
-    let realUrl = '';
-    if (type === 'tv') {
-        realUrl = `${baseUrl}/${configData.user}/${configData.pass}/${channelId}`;
-    } else if (type === 'movie') {
-        realUrl = `${baseUrl}/movie/${configData.user}/${configData.pass}/${channelId}`;
-    } else {
-        realUrl = `${baseUrl}/series/${configData.user}/${configData.pass}/${channelId}`;
-    }
+// Para TV: tentar formato LIVE com .ts (Xtream standard)
+const isTs = !String(channelId).includes('.');
+let realUrl = '';
+if (type === 'tv') {
+    // Xtream live stream: /live/user/pass/ID.ts  (formato mais compatível)
+    realUrl = `${baseUrl}/live/${configData.user}/${configData.pass}/${channelId}.ts`;
+} else if (type === 'movie') {
+    // Filmes: já tem extensão no channelId
+    const ext = String(channelId).includes('.') ? '' : '.mp4';
+    realUrl = `${baseUrl}/movie/${configData.user}/${configData.pass}/${channelId}${ext}`;
+} else {
+    const ext = String(channelId).includes('.') ? '' : '.mp4';
+    realUrl = `${baseUrl}/series/${configData.user}/${configData.pass}/${channelId}${ext}`;
+}
     global.metaShield[key + '_real'] = realUrl;
     console.log(`[XTREAM-SHIELD] URL real guardado: ${realUrl.substring(0, 60)}...`);
 
