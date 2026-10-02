@@ -19,12 +19,9 @@ async function authenticate(config, proxyUrl = null) {
         if (Date.now() - cached.timestamp < CACHE_TTL) return cached.data;
     }
 
-    // ===== #2: IDs como MAG real (SHA1) =====
-    const sha1 = (s) => crypto.createHash('sha1').update(s).digest('hex').toUpperCase();
-    const deviceId   = sha1(mac);                       // 40 chars
-    const deviceId2  = sha1(mac + mac);                 // 40 chars salted
-    const serialNumber = sha1(mac).substring(0, 26);    // 26 chars
-
+    const deviceId = crypto.createHash('md5').update(mac).digest('hex').toUpperCase();
+    const shortHash = crypto.createHash('md5').update(mac).digest('hex').substring(0, 13).toUpperCase();
+    const serialNumber = `8CA3${shortHash.substring(4)}`;
     // ===== #4: Perfil por modelo =====
     const DEVICE_PROFILES = {
         MAG245: { name: 'MAG245', sw: '0.2.18-r14-pub-245', sType: '245', ver: '0.2.18-r14', rev: '2 rev: 245' },
@@ -50,7 +47,7 @@ async function authenticate(config, proxyUrl = null) {
     // ===== #5: Sem X-Forwarded-For =====
     const universalHeaders = {
         'User-Agent': `Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: ${profile.rev} Safari/533.3`,
-        'X-User-Agent': `Model: ${profile.name}; SW: ${profile.sw}; STB_active: true; Device ID: ${deviceId}; Device ID 2: ${deviceId2}; Signature: 88e76854; SN: ${serialNumber}`,
+        'X-User-Agent': `Model: ${profile.name}; SW: ${profile.sw}; STB_active: true; Device ID: ${deviceId}; Device ID 2: ${deviceId}; Signature: 88e76854; SN: ${serialNumber}`,
         'Referer': `${cleanBase}/c/`,
         'Accept': 'application/json, text/javascript, */*; q=0.01',
         'X-Runtime-Info': `render: gles; s_type: ${profile.sType}; s_ver: ${profile.ver};`,
