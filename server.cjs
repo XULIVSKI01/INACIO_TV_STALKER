@@ -652,6 +652,7 @@ setInterval(() => {
 }, 60000);
 */
 
+
 // ===== METADATA SHIELD: responde ao metadata probe do Tizen sem tocar no portal =====
 app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
     const { config, listIdx, channelId } = req.params;
@@ -692,7 +693,9 @@ if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
     global.metaShield[key] = now;
     console.log(`[META-SHIELD] 1º pedido (metadata) → a responder localmente`);
 
-    // Cria o URL real do portal em background (para o 2ºine.authenticate(configData, configData.proxy);
+    // Cria o URL real do portal em background (para o 2º pedido)
+    try {
+        const auth = await engine.authenticate(configData, configData.proxy);
         if (!auth) return res.status(401).end();
         const stalkerCmd = decodeURIComponent(channelId);
         const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
