@@ -7,11 +7,8 @@ const { spawn } = require('child_process');
 
 // Cache de autenticação (10 minutos)
 const authCache = new Map();
-const CACHE_TTL = 10 * 60 * 1000;
+const CACHE_TTL = 15 * 60 * 1000;
 
-// ============================================================
-// 1. AUTENTICAÇÃO (copiada do addon.cjs, com suporte a proxy)
-// ============================================================
 async function authenticate(config, proxyUrl = null) {
     const mac = (config.mac || "00:1A:79:00:00:00").toUpperCase();
     const cleanBase = config.url.trim().replace(/\/$/, "");
@@ -22,27 +19,48 @@ async function authenticate(config, proxyUrl = null) {
         if (Date.now() - cached.timestamp < CACHE_TTL) return cached.data;
     }
 
-    const fakeResidencialIP = '188.81.121.45';
-    const deviceId = crypto.createHash('md5').update(mac).digest('hex').toUpperCase();
-    const shortHash = crypto.createHash('md5').update(mac).digest('hex').substring(0, 13).toUpperCase();
-    const serialNumber = `8CA3${shortHash.substring(4)}`;
+    // ===== #2: IDs como MAG real (SHA1) =====
+    const sha1 = (s) => crypto.createHash('sha1').update(s).digest('hex').toUpperCase();
+    const deviceId   = sha1(mac);                       // 40 chars
+    const deviceId2  = sha1(mac + mac);                 // 40 chars salted
+    const serialNumber = sha1(mac).substring(0, 26);    // 26 chars
 
+    // ===== #4: Perfil por modelo =====
+    const DEVICE_PROFILES = {
+        MAG245: { name: 'MAG245', sw: '0.2.18-r14-pub-245', sType: '245', ver: '0.2.18-r14', rev: '2 rev: 245' },
+        MAG250: { name: 'MAG250', sw: '2.18-r14-pub-250', sType: '250', ver: '0.2.18-r14', rev: '2 rev: 250' },
+        MAG254: { name: 'MAG254', sw: '2.18-r14-pub-254', sType: '254', ver: '0.2.18-r14', rev: '2 rev: 254' },
+        MAG255: { name: 'MAG255', sw: '2.18-r14-pub-255', sType: '255', ver: '0.2.18-r14', rev: '2 rev: 255' },
+        MAG256: { name: 'MAG256', sw: '2.20.05-256', sType: '256', ver: '2.20.05', rev: '4 rev: 27211' },
+        MAG257: { name: 'MAG257', sw: '2.20.05-257', sType: '257', ver: '2.20.05', rev: '4 rev: 27211' },
+        MAG270: { name: 'MAG270', sw: '2.20.06-270', sType: '270', ver: '2.20.06', rev: '4 rev: 27211' },
+        MAG275: { name: 'MAG275', sw: '2.20.06-275', sType: '275', ver: '2.20.06', rev: '4 rev: 27211' },
+        MAG322: { name: 'MAG322', sw: '2.20.05-322', sType: '322', ver: '2.20.05', rev: '4 rev: 27211' },
+        MAG324: { name: 'MAG324', sw: '2.20.05-324', sType: '324', ver: '2.20.05', rev: '4 rev: 27211' },
+        MAG349: { name: 'MAG349', sw: '2.20.06-349', sType: '349', ver: '2.20.06', rev: '4 rev: 27211' },
+        MAG351: { name: 'MAG351', sw: '2.20.06-351', sType: '351', ver: '2.20.06', rev: '4 rev: 27211' },
+        MAG352: { name: 'MAG352', sw: '2.20.06-352', sType: '352', ver: '2.20.06', rev: '4 rev: 27211' },
+        MAG420: { name: 'MAG420', sw: '2.20.06-420', sType: '420', ver: '2.20.06', rev: '4 rev: 27211' },
+        MAG424: { name: 'MAG424', sw: '2.20.06-424', sType: '424', ver: '2.20.06', rev: '4 rev: 27211' },
+        MAG425: { name: 'MAG425', sw: '2.20.06-425', sType: '425', ver: '2.20.06', rev: '4 rev: 27211' },
+        MAG520: { name: 'MAG520', sw: '2.20.06-520', sType: '520', ver: '2.20.06', rev: '4 rev: 27211' }
+    };
+    const profile = DEVICE_PROFILES[config.model] || DEVICE_PROFILES.MAG250;
+
+    // ===== #5: Sem X-Forwarded-For =====
     const universalHeaders = {
-        'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
-        'X-User-Agent': `Model: MAG250; SW: 2.18-r14-pub-250; STB_active: true; Device ID: ${deviceId}; Device ID 2: ${deviceId}; Signature: 88e76854; SN: ${serialNumber}`,
+        'User-Agent': `Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: ${profile.rev} Safari/533.3`,
+        'X-User-Agent': `Model: ${profile.name}; SW: ${profile.sw}; STB_active: true; Device ID: ${deviceId}; Device ID 2: ${deviceId2}; Signature: 88e76854; SN: ${serialNumber}`,
         'Referer': `${cleanBase}/c/`,
         'Accept': 'application/json, text/javascript, */*; q=0.01',
-        'X-Runtime-Info': 'render: gles; s_type: 250; s_ver: 0.2.18-r14;',
+        'X-Runtime-Info': `render: gles; s_type: ${profile.sType}; s_ver: ${profile.ver};`,
         'X-Requested-With': 'XMLHttpRequest',
-        'X-Forwarded-For': fakeResidencialIP,
-        'X-Real-IP': fakeResidencialIP,
-        'Client-IP': fakeResidencialIP,
         'Cookie': `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe/Lisbon;`
     };
 
     const paths = ['/c/portal.php', '/portal.php', '/server/load.php', '/stalker_portal/server/load.php'];
 
-    console.log(`[STB-EMU MODE] Tentando enganar portal: ${cleanBase}`);
+    console.log(`[STB-EMU MODE] Tentando enganar portal: ${cleanBase} (${profile.name})`);
 
     for (const path of paths) {
         const fullUrl = `${cleanBase}${path}?`;
@@ -56,12 +74,33 @@ async function authenticate(config, proxyUrl = null) {
                 console.log(`[AUTH SUCCESS] Servidor enganado em: ${path}`);
                 universalHeaders.Authorization = `Bearer ${token}`;
                 universalHeaders.Cookie += ` token=${token}; access_token=${token};`;
-                try { await axios.get(`${fullUrl}type=stb&action=get_profile&token=${token}&JsHttpRequest=1-0`, getAxiosOpts(config, { headers: universalHeaders })); } catch (e) { }
+
+                // get_profile
+                try {
+                    await axios.get(`${fullUrl}type=stb&action=get_profile&token=${token}&JsHttpRequest=1-0`, getAxiosOpts(config, { headers: universalHeaders }));
+                } catch (e) { }
+
+                // ===== #1: Boot sequence completa (best-effort) =====
+                const sn = data.js.sn || deviceId.substring(0, 13);
+                const bootEndpoints = [
+                    `type=stb&action=get_account_info&sn=${sn}&token=${token}&JsHttpRequest=1-0`,
+                    `type=stb&action=get_modules&sn=${sn}&token=${token}&JsHttpRequest=1-0`,
+                    `type=stb&action=get_localization&sn=${sn}&token=${token}&JsHttpRequest=1-0`,
+                    `type=stb&action=set_stb_lang&lang=en&sn=${sn}&token=${token}&JsHttpRequest=1-0`,
+                    `type=stb&action=get_events&event_active_id=0&init=1&sn=${sn}&token=${token}&JsHttpRequest=1-0`
+                ];
+                for (const ep of bootEndpoints) {
+                    try {
+                        await axios.get(`${fullUrl}${ep}`, getAxiosOpts(config, { headers: universalHeaders, timeout: 4000 }));
+                    } catch (e) { }
+                }
+                console.log(`[AUTH] Boot sequence completa enviada`);
+
                 const result = {
                     api: fullUrl,
                     apiAlt: fullUrl.replace(/\/[^\/]+$/, '/server/load.php?'),
                     token,
-                    authData: { sn: data.js.sn || deviceId.substring(0, 13), headers: universalHeaders }
+                    authData: { sn, headers: universalHeaders }
                 };
                 authCache.set(cacheKey, { data: result, timestamp: Date.now() });
                 return result;
@@ -71,43 +110,44 @@ async function authenticate(config, proxyUrl = null) {
         }
     }
 
-// Fallback clássico (método antigo, sem IP falso)
-console.log(`[AUTH] Caminhos modernos falharam. A tentar método clássico...`);
-const classicBase = cleanBase.replace(/\/c$/, '');
-const classicPaths = ['/c/portal.php', '/stalker_portal/c/portal.php', '/portal.php', '/server/load.php'];
+    // ===== Fallback clássico =====
+    console.log(`[AUTH] Caminhos modernos falharam. A tentar método clássico...`);
+    const classicBase = cleanBase.replace(/\/c$/, '');
+    const classicPaths = ['/c/portal.php', '/stalker_portal/c/portal.php', '/portal.php', '/server/load.php'];
 
-for (const path of classicPaths) {
-    const fullUrl = `${classicBase}${path}?`;
-    try {
-        const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
-        const classicHeaders = {
-    'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
-    'Referer': `${classicBase}/c/`,
-    'Accept': '*/*',
-    'Connection': 'keep-alive',
-    'Cookie': `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe/Lisbon;`
-};
-        const res = await axios.get(handshakeUrl, getAxiosOpts(config, { headers: classicHeaders, timeout: 8000 }, proxyUrl));
-        let data = res.data;
-        if (typeof data === 'string') data = JSON.parse(data.replace(/\/\*[\s\S]*?\*\//g, "").trim());
-        if (data?.js?.token) {
-            const token = data.js.token;
-            console.log(`[AUTH SUCCESS] Clássico funcionou em: ${path}`);
-            classicHeaders.Authorization = `Bearer ${token}`;
-            classicHeaders.Cookie += ` token=${token}; access_token=${token};`;
-            const result = {
-                api: `${classicBase}${path}?`,
-                apiAlt: `${classicBase}/server/load.php?`,
-                token,
-                authData: { sn: data.js.sn || classicHeaders.sn, headers: classicHeaders }
+    for (const path of classicPaths) {
+        const fullUrl = `${classicBase}${path}?`;
+        try {
+            const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
+            const classicHeaders = {
+                'User-Agent': universalHeaders['User-Agent'],
+                'Referer': `${classicBase}/c/`,
+                'Accept': '*/*',
+                'Connection': 'keep-alive',
+                'Cookie': `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe/Lisbon;`
             };
-            authCache.set(cacheKey, { data: result, timestamp: Date.now() });
-            return result;
+            const res = await axios.get(handshakeUrl, getAxiosOpts(config, { headers: classicHeaders, timeout: 8000 }, proxyUrl));
+            let data = res.data;
+            if (typeof data === 'string') data = JSON.parse(data.replace(/\/\*[\s\S]*?\*\//g, "").trim());
+            if (data?.js?.token) {
+                const token = data.js.token;
+                console.log(`[AUTH SUCCESS] Clássico funcionou em: ${path}`);
+                classicHeaders.Authorization = `Bearer ${token}`;
+                classicHeaders.Cookie += ` token=${token}; access_token=${token};`;
+                const result = {
+                    api: `${classicBase}${path}?`,
+                    apiAlt: `${classicBase}/server/load.php?`,
+                    token,
+                    authData: { sn: data.js.sn || classicHeaders.sn, headers: classicHeaders }
+                };
+                authCache.set(cacheKey, { data: result, timestamp: Date.now() });
+                return result;
+            }
+        } catch (e) {
+            console.warn(`[AUTH SCAN] Clássico recusado em ${path} (${e.message})`);
         }
-    } catch (e) {
-        console.warn(`[AUTH SCAN] Clássico recusado em ${path} (${e.message})`);
     }
-}
+
     console.error(`[AUTH FATAL] Nenhum caminho ou perfil funcionou para este MAC.`);
     return null;
 }
