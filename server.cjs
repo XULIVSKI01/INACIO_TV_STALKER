@@ -7,9 +7,6 @@ const { spawn } = require('child_process');
 const engine = require("./stalkerengine.cjs");
 const addon = require("./addon.cjs");
 
-// Guarda o canal ativo por portal+MAC (para get_channel_status no keep-alive)
-if (!global.activeChannels) global.activeChannels = {};
-
 // ===== LIMPA URLs MANGLED DO PORTAL =====
 function extractUrlFix(jsData) {
     if (!jsData) return null;
@@ -57,18 +54,19 @@ function rememberConfig(configB64) {
     }
 }
 
+// Um único envio de get_events (mantém sessão viva)
 async function sendKeepAlive(list) {
     try {
         const auth = await engine.authenticate(list, list.proxy);
         if (!auth || !auth.api || !auth.token) return false;
 
-        // 1) get_events — mantém sessão STB viva
         const url = `${auth.api}type=stb&action=get_events&event_active_id=0&init=0&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
         const res = await axios.get(url, engine.getAxiosOpts(list, {
             headers: auth.authData.headers,
             timeout: 4000
         }));
 
+        // Se o portal devolveu novo token, atualiza a cache
         const newToken = res.data?.js?.token;
         if (newToken && newToken !== auth.token) {
             auth.token = newToken;
@@ -77,24 +75,12 @@ async function sendKeepAlive(list) {
             auth.authData.headers.Cookie = auth.authData.headers.Cookie.replace(/access_token=[^;]+/, `access_token=${newToken}`);
         }
 
-        // 2) get_channel_status — se há canal ativo nos últimos 2 min
-        const activeKey = `${list.url}_${list.mac}_active`;
-        const active = global.activeChannels && global.activeChannels[activeKey];
-        if (active && Date.now() - active.ts < 120000) {
-            try {
-                const chUrl = `${auth.api}type=itv&action=get_channel_status&ch_id=${encodeURIComponent(active.channelId)}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
-                await axios.get(chUrl, engine.getAxiosOpts(list, {
-                    headers: auth.authData.headers,
-                    timeout: 3000
-                })).catch(() => {});
-            } catch (e) { /* silencioso */ }
-        }
-
         return true;
     } catch (e) {
         return false;
     }
 }
+
 // Loop background — a cada 2 minutos para cada portal conhecido
 setInterval(async () => {
     for (const cfgB64 of global.recentConfigs) {
@@ -241,32 +227,11 @@ app.get("/configure", (req, res) => {
                                 <input type="text" class="mac" placeholder="00:1A:79:XX:XX:XX">
                                 <label>BOX MODEL</label>
                                 <select class="model">
-    <optgroup label="MAG Antigos">
-        <option value="MAG245">MAG 245</option>
-        <option value="MAG250" selected>MAG 250 (recomendado)</option>
-        <option value="MAG254">MAG 254</option>
-        <option value="MAG255">MAG 255</option>
-    </optgroup>
-    <optgroup label="MAG Intermédios">
-        <option value="MAG256">MAG 256</option>
-        <option value="MAG257">MAG 257</option>
-        <option value="MAG270">MAG 270</option>
-        <option value="MAG275">MAG 275</option>
-    </optgroup>
-    <optgroup label="MAG HD">
-        <option value="MAG322">MAG 322</option>
-        <option value="MAG324">MAG 324</option>
-    </optgroup>
-    <optgroup label="MAG 4K">
-        <option value="MAG349">MAG 349</option>
-        <option value="MAG351">MAG 351</option>
-        <option value="MAG352">MAG 352</option>
-        <option value="MAG420">MAG 420</option>
-        <option value="MAG424">MAG 424</option>
-        <option value="MAG425">MAG 425</option>
-        <option value="MAG520">MAG 520</option>
-    </optgroup>
-</select>
+                                    <option value="MAG250">MAG 250</option>
+                                    <option value="MAG254">MAG 254</option>
+                                    <option value="MAG256">MAG 256</option>
+                                    <option value="MAG322">MAG 322</option>
+                                </select>
                                 <span class="adv-toggle" onclick="toggleAdv('\${id}')">Configurações Avançadas</span>
                                 <div class="advanced" id="adv-\${id}">
                                     <label>SERIAL NUMBER (SN)</label><input type="text" class="sn">
@@ -564,10 +529,9 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
                 if (auth) {
                     const streamHeaders = {
                         ...auth.authData.headers,
-                        'Referer': configData.url.replace(/\/$/, '') + '/c/', */
-                        //'Accept': '*/*',
-                       // 'Connection': 'keep-alive'
-/*
+                        'Referer': configData.url.replace(/\/$/, '') + '/c/',*/
+                       // 'Accept': '*/*',
+                     /*   'Connection': 'keep-alive'
                     };
                     const preRes = await axios.get(realUrl, { headers: streamHeaders, responseType: 'stream', timeout: 8000 });
                     let buf = Buffer.alloc(0);
@@ -601,10 +565,9 @@ if (!global.metaShield[key + '_prelock']) {
             if (!auth) return;
             const streamHeaders = {
                 ...auth.authData.headers,
-                'Referer': configData.url.replace(/\/$/, '') + '/c/', */
-                //'Accept': '*/*',
-               // 'Connection': 'keep-alive'
-/*
+                'Referer': configData.url.replace(/\/$/, '') + '/c/',*/
+               // 'Accept': '*/*',
+              /*  'Connection': 'keep-alive'
             };
             const preRes = await axios.get(realUrl, { headers: streamHeaders, responseType: 'stream', timeout: 8000 });
             let buf = Buffer.alloc(0);
@@ -688,6 +651,8 @@ setInterval(() => {
     });
 }, 60000);
 */
+
+
 // ===== METADATA SHIELD: responde ao metadata probe do Tizen sem tocar no portal =====
 app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
     const { config, listIdx, channelId } = req.params;
@@ -741,12 +706,8 @@ let streamUrl = extractUrlFix(linkRes.data?.js);
 
 if (streamUrl && streamUrl.trim()) {
     global.metaShield[key + '_real'] = streamUrl.trim();
-    // Guarda canal ativo para o keep-alive (timestamp, sem cleanup)
-    const activeKey = `${configData.url}_${configData.mac}_active`;
-    global.activeChannels[activeKey] = { channelId: channelId, ts: Date.now() };
     console.log(`[META-SHIELD] URL real guardado (limpo): ${streamUrl.substring(0, 70)}...`);
 }
-    
     } catch(e) {
         console.error(`[META-SHIELD] Erro ao criar link: ${e.message}`);
     }
