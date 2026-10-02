@@ -652,6 +652,67 @@ setInterval(() => {
 }, 60000);
 */
 
+// ===== SHIELD XTREAM =====
+app.get("/meta-xtream/:config/:listIdx/:channelId", async (req, res) => {
+    const { config, listIdx, channelId } = req.params;
+    const type = req.query.type || 'tv';
+    const lists = addon.parseConfig(config);
+    const configData = lists[listIdx];
+    if (!configData || configData.type !== 'xtream') return res.status(400).end();
+
+    const key = `xt_${config.slice(0,20)}_${channelId}`;
+    if (!global.metaShield) global.metaShield = {};
+    const now = Date.now();
+
+    // 2º pedido = reprodução → 1 único redirect para o URL real Xtream
+    if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
+        const realUrl = global.metaShield[key + '_real'];
+        if (realUrl) {
+            console.log(`[XTREAM-SHIELD] Redirecionar → Xtream real`);
+            return res.redirect(302, realUrl);
+        }
+        // Não temos URL real → fake TS
+    }
+
+    // 1º pedido = metadata → fake TS
+    global.metaShield[key] = now;
+    console.log(`[XTREAM-SHIELD] 1º pedido (metadata) → fake TS`);
+
+    // Constrói URL real Xtream
+    const baseUrl = configData.url.replace(/\/$/, "");
+    let realUrl = '';
+    if (type === 'tv') {
+        realUrl = `${baseUrl}/${configData.user}/${configData.pass}/${channelId}`;
+    } else if (type === 'movie') {
+        realUrl = `${baseUrl}/movie/${configData.user}/${configData.pass}/${channelId}`;
+    } else {
+        realUrl = `${baseUrl}/series/${configData.user}/${configData.pass}/${channelId}`;
+    }
+    global.metaShield[key + '_real'] = realUrl;
+    console.log(`[XTREAM-SHIELD] URL real guardado: ${realUrl.substring(0, 60)}...`);
+
+    // Fake TS
+    const fakeTs = Buffer.alloc(188, 0);
+    fakeTs[0] = 0x47;
+    res.writeHead(200, {
+        'Content-Type': 'video/mp2t',
+        'Content-Length': fakeTs.length,
+        'Connection': 'close'
+    });
+    res.end(fakeTs);
+});
+
+// Limpeza do Xtream shield
+setInterval(() => {
+    if (!global.metaShield) return;
+    const now = Date.now();
+    Object.keys(global.metaShield).forEach(k => {
+        if (k.startsWith('xt_') && typeof global.metaShield[k] === 'number' && now - global.metaShield[k] > 120000) {
+            delete global.metaShield[k];
+            delete global.metaShield[k + '_real'];
+        }
+    });
+}, 60000);
 
 // ===== METADATA SHIELD: responde ao metadata probe do Tizen sem tocar no portal =====
 app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
