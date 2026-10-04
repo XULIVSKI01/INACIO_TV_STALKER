@@ -666,6 +666,39 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
     if (!global.metaShield) global.metaShield = {};
     const now = Date.now();
 
+    // ===== DETEÇÃO SEGURA (default = Tizen shield) =====
+// Bypassa o shield apenas para players que funcionam com 1 ligação directa
+const ua = (req.headers['user-agent'] || '').toLowerCase();
+const isKnownDirectPlayer = /vlc|mpv/i.test(ua) || 
+                            (/android/i.test(ua) && !/tizen|samsung/i.test(ua));
+
+if (isKnownDirectPlayer) {
+    console.log(`[META-SHIELD] Android/VLC/MPV → redirect direct`);
+    // Reutiliza cache recente
+    if (global.metaShield[key + '_real'] && now - global.metaShield[key] < 60000) {
+        return res.redirect(302, global.metaShield[key + '_real']);
+    }
+    // Cria link e redireciona direto
+    try {
+        const auth = await engine.authenticate(configData, configData.proxy);
+        if (auth) {
+            const stalkerCmd = decodeURIComponent(channelId);
+            const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+            const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers, timeout: 5000 }));
+            let streamUrl = extractUrlFix(linkRes.data?.js);
+            if (streamUrl && streamUrl.trim()) {
+                global.metaShield[key] = now;
+                global.metaShield[key + '_real'] = streamUrl.trim();
+                return res.redirect(302, streamUrl.trim());
+            }
+        }
+    } catch(e) {
+        console.error(`[META-SHIELD] Erro direct: ${e.message}`);
+    }
+    return res.status(500).end();
+}
+// ===== FIM DETEÇÃO =====
+
     // Se já redirecionámos 1 vez, deixamos o Tizen "preso" com fake TS para ele não reabrir
 if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
     const redirectCount = global.metaShield[key + '_redirects'] || 0;
