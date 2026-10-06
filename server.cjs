@@ -666,91 +666,19 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
     if (!global.metaShield) global.metaShield = {};
     const now = Date.now();
 
-    // ===== DETEÇÃO SEGURA (default = Tizen shield) =====
-// Bypassa o shield apenas para players que funcionam com 1 ligação directa
-const ua = (req.headers['user-agent'] || '').toLowerCase();
-const isKnownDirectPlayer = /vlc|mpv/i.test(ua) || 
-                            (/android/i.test(ua) && !/tizen|samsung/i.test(ua));
-
-if (isKnownDirectPlayer) {
-    console.log(`[META-SHIELD] Android/VLC/MPV → redirect direct`);
-    // Reutiliza cache recente
-    if (global.metaShield[key + '_real'] && now - global.metaShield[key] < 60000) {
-        return res.redirect(302, global.metaShield[key + '_real']);
-    }
-    // Cria link e redireciona direto
-    try {
-        const auth = await engine.authenticate(configData, configData.proxy);
-        if (auth) {
-            const stalkerCmd = decodeURIComponent(channelId);
-            const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
-            const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers, timeout: 5000 }));
-            let streamUrl = extractUrlFix(linkRes.data?.js);
-            if (streamUrl && streamUrl.trim()) {
-                global.metaShield[key] = now;
-                global.metaShield[key + '_real'] = streamUrl.trim();
-                return res.redirect(302, streamUrl.trim());
-            }
-        }
-    } catch(e) {
-        console.error(`[META-SHIELD] Erro direct: ${e.message}`);
-    }
-    return res.status(500).end();
-}
-// ===== FIM DETEÇÃO =====
-
     // Se já redirecionámos 1 vez, deixamos o Tizen "preso" com fake TS para ele não reabrir
 if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
     const redirectCount = global.metaShield[key + '_redirects'] || 0;
     const realUrl = global.metaShield[key + '_real'];
 
-        // ===== HIT 1: redirect PURO (rápido, sem pre-lock) =====
     if (redirectCount < 1 && realUrl) {
-        global.metaShield[key + '_redirects'] = 1;
-        console.log(`[META-SHIELD] Hit 1 → redirect puro`);
+        global.metaShield[key + '_redirects'] = redirectCount + 1;
+        console.log(`[META-SHIELD] Redirecionar #${redirectCount + 1} → portal`);
         return res.redirect(302, realUrl);
     }
 
-    // ===== HIT 2: Tizen voltou = direct falhou. PRE-LOCK + 2º redirect =====
-    if (redirectCount === 1 && realUrl) {
-        global.metaShield[key + '_redirects'] = 2;
-
-        if (!global.metaShield[key + '_prelock_done']) {
-            global.metaShield[key + '_prelock_done'] = true;
-            console.log(`[PRE-LOCK] Direct falhou → a aquecer portal`);
-            try {
-                const auth = global.metaShield[key + '_auth'];
-                if (auth) {
-                    const streamHeaders = {
-                        ...auth.authData.headers,
-                        'Referer': configData.url.replace(/\/$/, '') + '/c/',
-                        'Accept': '*/*',
-                        'Connection': 'keep-alive'
-                    };
-                    const preRes = await axios.get(realUrl, { headers: streamHeaders, responseType: 'stream', timeout: 5000 });
-                    let buf = Buffer.alloc(0);
-                    await new Promise((resolve) => {
-                        const t = setTimeout(resolve, 2500);
-                        preRes.data.on('data', (chunk) => {
-                            buf = Buffer.concat([buf, chunk]);
-                            if (buf.length >= 64 * 1024) { clearTimeout(t); resolve(); }
-                        });
-                        preRes.data.on('error', () => { clearTimeout(t); resolve(); });
-                    });
-                    try { preRes.data.destroy(); } catch(e) {}
-                    console.log(`[PRE-LOCK] ✅ ${buf.length} bytes — portal quente`);
-                }
-            } catch(e) {
-                console.log(`[PRE-LOCK] Falhou: ${e.message}`);
-            }
-        }
-
-        console.log(`[META-SHIELD] Hit 2 → redirect (portal quente)`);
-        return res.redirect(302, realUrl);
-    }
-
-    // ===== HIT 3+: bloqueia Tizen com fake TS =====
-    console.log(`[META-SHIELD] Hit ${redirectCount + 1} → fake TS`);
+    // Já redirecionámos antes → Tizen está a insistir, damos fake TS para desistir
+    console.log(`[META-SHIELD] Tizen insistiu (${redirectCount + 1}º) → fake TS`);
     const fakeTs = Buffer.alloc(188, 0);
     fakeTs[0] = 0x47;
     res.writeHead(200, {
@@ -777,17 +705,7 @@ const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { heade
 let streamUrl = extractUrlFix(linkRes.data?.js);
 
 if (streamUrl && streamUrl.trim()) {
-    global.metaShield[key + '_auth'] = auth;                    // ← NOVA
-    // Adiciona MAC ao URL (o Tizen envia o URL completo, incluindo o MAC)
-let finalUrl = streamUrl.trim();
-const mac = (configData.mac || '').toUpperCase();
-if (mac && !finalUrl.includes('mac=')) {
-    finalUrl += (finalUrl.includes('?') ? '&' : '?') + 'mac=' + encodeURIComponent(mac);
-}
-global.metaShield[key + '_real'] = finalUrl;
-console.log(`[META-SHIELD] URL com MAC: ${finalUrl.substring(0, 80)}...`);
-    global.metaShield[key + '_redirects'] = 0;                  // ← NOVA
-    global.metaShield[key + '_prelock_done'] = false;           // ← NOVA
+    global.metaShield[key + '_real'] = streamUrl.trim();
     console.log(`[META-SHIELD] URL real guardado (limpo): ${streamUrl.substring(0, 70)}...`);
 }
     } catch(e) {
@@ -814,8 +732,6 @@ setInterval(() => {
             delete global.metaShield[k];
             delete global.metaShield[k + '_real'];
             delete global.metaShield[k + '_redirects'];
-            delete global.metaShield[k + '_auth'];
-            delete global.metaShield[k + '_prelock_done'];
         }
     });
 }, 60000);
