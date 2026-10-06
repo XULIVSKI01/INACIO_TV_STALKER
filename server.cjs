@@ -704,14 +704,53 @@ if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
     const redirectCount = global.metaShield[key + '_redirects'] || 0;
     const realUrl = global.metaShield[key + '_real'];
 
+        // ===== HIT 1: redirect PURO (rápido, sem pre-lock) =====
     if (redirectCount < 1 && realUrl) {
-        global.metaShield[key + '_redirects'] = redirectCount + 1;
-        console.log(`[META-SHIELD] Redirecionar #${redirectCount + 1} → portal`);
+        global.metaShield[key + '_redirects'] = 1;
+        console.log(`[META-SHIELD] Hit 1 → redirect puro`);
         return res.redirect(302, realUrl);
     }
 
-    // Já redirecionámos antes → Tizen está a insistir, damos fake TS para desistir
-    console.log(`[META-SHIELD] Tizen insistiu (${redirectCount + 1}º) → fake TS`);
+    // ===== HIT 2: Tizen voltou = direct falhou. PRE-LOCK + 2º redirect =====
+    if (redirectCount === 1 && realUrl) {
+        global.metaShield[key + '_redirects'] = 2;
+
+        if (!global.metaShield[key + '_prelock_done']) {
+            global.metaShield[key + '_prelock_done'] = true;
+            console.log(`[PRE-LOCK] Direct falhou → a aquecer portal`);
+            try {
+                const auth = global.metaShield[key + '_auth'];
+                if (auth) {
+                    const streamHeaders = {
+                        ...auth.authData.headers,
+                        'Referer': configData.url.replace(/\/$/, '') + '/c/',
+                        'Accept': '*/*',
+                        'Connection': 'keep-alive'
+                    };
+                    const preRes = await axios.get(realUrl, { headers: streamHeaders, responseType: 'stream', timeout: 5000 });
+                    let buf = Buffer.alloc(0);
+                    await new Promise((resolve) => {
+                        const t = setTimeout(resolve, 2500);
+                        preRes.data.on('data', (chunk) => {
+                            buf = Buffer.concat([buf, chunk]);
+                            if (buf.length >= 64 * 1024) { clearTimeout(t); resolve(); }
+                        });
+                        preRes.data.on('error', () => { clearTimeout(t); resolve(); });
+                    });
+                    try { preRes.data.destroy(); } catch(e) {}
+                    console.log(`[PRE-LOCK] ✅ ${buf.length} bytes — portal quente`);
+                }
+            } catch(e) {
+                console.log(`[PRE-LOCK] Falhou: ${e.message}`);
+            }
+        }
+
+        console.log(`[META-SHIELD] Hit 2 → redirect (portal quente)`);
+        return res.redirect(302, realUrl);
+    }
+
+    // ===== HIT 3+: bloqueia Tizen com fake TS =====
+    console.log(`[META-SHIELD] Hit ${redirectCount + 1} → fake TS`);
     const fakeTs = Buffer.alloc(188, 0);
     fakeTs[0] = 0x47;
     res.writeHead(200, {
@@ -738,7 +777,10 @@ const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { heade
 let streamUrl = extractUrlFix(linkRes.data?.js);
 
 if (streamUrl && streamUrl.trim()) {
+    global.metaShield[key + '_auth'] = auth;                    // ← NOVA
     global.metaShield[key + '_real'] = streamUrl.trim();
+    global.metaShield[key + '_redirects'] = 0;                  // ← NOVA
+    global.metaShield[key + '_prelock_done'] = false;           // ← NOVA
     console.log(`[META-SHIELD] URL real guardado (limpo): ${streamUrl.substring(0, 70)}...`);
 }
     } catch(e) {
