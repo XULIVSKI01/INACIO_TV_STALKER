@@ -666,6 +666,41 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
     if (!global.metaShield) global.metaShield = {};
     const now = Date.now();
 
+    // ===== DETEÇÃO DE PLATAFORMA =====
+const ua = (req.headers['user-agent'] || '').toLowerCase();
+// Só bypassa para VLC/MPV (players que fazem 1 ligação só)
+// Tudo o resto — Tizen, ExoPlayer, browsers — passa pelo shield.
+const isDefinitelyNonTizen = /vlc|mpv/i.test(ua);
+
+if (isDefinitelyNonTizen) {
+    console.log(`[META-SHIELD] VLC/MPV detectado → redirect direct`);
+
+    // Reutiliza URL se tiver cache recente
+    if (global.metaShield[key + '_real'] && now - global.metaShield[key] < 60000) {
+        return res.redirect(302, global.metaShield[key + '_real']);
+    }
+
+    // Cria link novo e redireciona directamente
+    try {
+        const auth = await engine.authenticate(configData, configData.proxy);
+        if (!auth) return res.status(401).end();
+        const stalkerCmd = decodeURIComponent(channelId);
+        const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+        const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers, timeout: 5000 }));
+        let streamUrl = extractUrlFix(linkRes.data?.js);
+        if (streamUrl && streamUrl.trim()) {
+            global.metaShield[key] = now;
+            global.metaShield[key + '_real'] = streamUrl.trim();
+            console.log(`[META-SHIELD] Direct: ${streamUrl.substring(0, 60)}...`);
+            return res.redirect(302, streamUrl.trim());
+        }
+    } catch(e) {
+        console.error(`[META-SHIELD] Erro direct: ${e.message}`);
+    }
+    return res.status(500).end();
+}
+// ===== FIM DETEÇÃO =====
+
     // Se já redirecionámos 1 vez, deixamos o Tizen "preso" com fake TS para ele não reabrir
 if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
     const redirectCount = global.metaShield[key + '_redirects'] || 0;
