@@ -778,7 +778,14 @@ let streamUrl = extractUrlFix(linkRes.data?.js);
 
 if (streamUrl && streamUrl.trim()) {
     global.metaShield[key + '_auth'] = auth;                    // ← NOVA
-    global.metaShield[key + '_real'] = streamUrl.trim();
+    // Adiciona MAC ao URL (o Tizen envia o URL completo, incluindo o MAC)
+let finalUrl = streamUrl.trim();
+const mac = (configData.mac || '').toUpperCase();
+if (mac && !finalUrl.includes('mac=')) {
+    finalUrl += (finalUrl.includes('?') ? '&' : '?') + 'mac=' + encodeURIComponent(mac);
+}
+global.metaShield[key + '_real'] = finalUrl;
+console.log(`[META-SHIELD] URL com MAC: ${finalUrl.substring(0, 80)}...`);
     global.metaShield[key + '_redirects'] = 0;                  // ← NOVA
     global.metaShield[key + '_prelock_done'] = false;           // ← NOVA
     console.log(`[META-SHIELD] URL real guardado (limpo): ${streamUrl.substring(0, 70)}...`);
