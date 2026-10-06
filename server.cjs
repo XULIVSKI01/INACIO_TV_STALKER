@@ -807,6 +807,8 @@ setInterval(() => {
             delete global.metaShield[k];
             delete global.metaShield[k + '_real'];
             delete global.metaShield[k + '_redirects'];
+            delete global.metaShield[k + '_auth'];
+            delete global.metaShield[k + '_prelock_done'];
         }
     });
 }, 60000);
