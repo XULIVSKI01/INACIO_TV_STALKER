@@ -661,92 +661,95 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
     const configData = lists[listIdx];
     if (!configData) return res.status(400).end();
 
+    // Se já vimos este pedido antes (o 2º do Tizen) → redireciona para o portal real
     const key = `${config.slice(0,20)}_${channelId}`;
     if (!global.metaShield) global.metaShield = {};
     const now = Date.now();
 
     // ===== DETEÇÃO DE PLATAFORMA =====
-    const ua = (req.headers['user-agent'] || '').toLowerCase();
-    const isDefinitelyNonTizen = /vlc|mpv/i.test(ua);
+const ua = (req.headers['user-agent'] || '').toLowerCase();
+// Só bypassa para VLC/MPV (players que fazem 1 ligação só)
+// Tudo o resto — Tizen, ExoPlayer, browsers — passa pelo shield.
+const isDefinitelyNonTizen = /vlc|mpv/i.test(ua);
 
-    // Helper: obtém URL real (sem chamar create_link se o cmd já for URL final)
-    const resolveRealUrl = async () => {
-        const stalkerCmd = decodeURIComponent(channelId);
-        const cleanCmd = stalkerCmd.replace(/^['"`]?(ffrt|ffmpeg|ffrt2|rtmp)['"`]?\s+/i, "").trim();
+if (isDefinitelyNonTizen) {
+    console.log(`[META-SHIELD] VLC/MPV detectado → redirect direct`);
 
-        // Se já é URL final e não é localhost → usar directamente
-        if ((cleanCmd.startsWith('http://') || cleanCmd.startsWith('https://'))
-            && !cleanCmd.includes('localhost') && !cleanCmd.includes('127.0.0.1')) {
-            console.log(`[META-SHIELD] Cmd já é URL final — sem create_link`);
-            return cleanCmd;
-        }
+    // Reutiliza URL se tiver cache recente
+    if (global.metaShield[key + '_real'] && now - global.metaShield[key] < 60000) {
+        return res.redirect(302, global.metaShield[key + '_real']);
+    }
 
-        // Caso contrário → create_link normal
+    // Cria link novo e redireciona directamente
+    try {
         const auth = await engine.authenticate(configData, configData.proxy);
-        if (!auth) return null;
+        if (!auth) return res.status(401).end();
+        const stalkerCmd = decodeURIComponent(channelId);
         const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
         const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers, timeout: 5000 }));
-        const streamUrl = extractUrlFix(linkRes.data?.js);
-        return streamUrl && streamUrl.trim() ? streamUrl.trim() : null;
-    };
+        let streamUrl = extractUrlFix(linkRes.data?.js);
+        if (streamUrl && streamUrl.trim()) {
+            global.metaShield[key] = now;
+            global.metaShield[key + '_real'] = streamUrl.trim();
+            console.log(`[META-SHIELD] Direct: ${streamUrl.substring(0, 60)}...`);
+            return res.redirect(302, streamUrl.trim());
+        }
+    } catch(e) {
+        console.error(`[META-SHIELD] Erro direct: ${e.message}`);
+    }
+    return res.status(500).end();
+}
+// ===== FIM DETEÇÃO =====
 
-    if (isDefinitelyNonTizen) {
-        console.log(`[META-SHIELD] VLC/MPV detectado → redirect direct`);
-        if (global.metaShield[key + '_real'] && now - global.metaShield[key] < 60000) {
-            return res.redirect(302, global.metaShield[key + '_real']);
-        }
-        try {
-            const url = await resolveRealUrl();
-            if (url) {
-                global.metaShield[key] = now;
-                global.metaShield[key + '_real'] = url;
-                console.log(`[META-SHIELD] Direct: ${url.substring(0, 60)}...`);
-                return res.redirect(302, url);
-            }
-        } catch(e) {
-            console.error(`[META-SHIELD] Erro direct: ${e.message}`);
-        }
-        return res.status(500).end();
+    // Se já redirecionámos 1 vez, deixamos o Tizen "preso" com fake TS para ele não reabrir
+if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
+    const redirectCount = global.metaShield[key + '_redirects'] || 0;
+    const realUrl = global.metaShield[key + '_real'];
+
+    if (redirectCount < 1 && realUrl) {
+        global.metaShield[key + '_redirects'] = redirectCount + 1;
+        console.log(`[META-SHIELD] Redirecionar #${redirectCount + 1} → portal`);
+        return res.redirect(302, realUrl);
     }
 
-    // Se já redirecionámos 1 vez → fake TS para o Tizen desistir
-    if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
-        const redirectCount = global.metaShield[key + '_redirects'] || 0;
-        const realUrl = global.metaShield[key + '_real'];
+    // Já redirecionámos antes → Tizen está a insistir, damos fake TS para desistir
+    console.log(`[META-SHIELD] Tizen insistiu (${redirectCount + 1}º) → fake TS`);
+    const fakeTs = Buffer.alloc(188, 0);
+    fakeTs[0] = 0x47;
+    res.writeHead(200, {
+        'Content-Type': 'video/mp2t',
+        'Content-Length': fakeTs.length,
+        'Connection': 'close'
+    });
+    return res.end(fakeTs);
+}
 
-        if (redirectCount < 1 && realUrl) {
-            global.metaShield[key + '_redirects'] = redirectCount + 1;
-            console.log(`[META-SHIELD] Redirecionar #${redirectCount + 1} → portal`);
-            return res.redirect(302, realUrl);
-        }
-
-        console.log(`[META-SHIELD] Tizen insistiu (${redirectCount + 1}º) → fake TS`);
-        const fakeTs = Buffer.alloc(188, 0);
-        fakeTs[0] = 0x47;
-        res.writeHead(200, {
-            'Content-Type': 'video/mp2t',
-            'Content-Length': fakeTs.length,
-            'Connection': 'close'
-        });
-        return res.end(fakeTs);
-    }
-
-    // 1º pedido = metadata
+    // 1º pedido = metadata → responde com fake TS header
     global.metaShield[key] = now;
     console.log(`[META-SHIELD] 1º pedido (metadata) → a responder localmente`);
 
+    // Cria o URL real do portal em background (para o 2º pedido)
     try {
-        const url = await resolveRealUrl();
-        if (url) {
-            global.metaShield[key + '_real'] = url;
-            console.log(`[META-SHIELD] URL real guardado: ${url.substring(0, 70)}...`);
-        }
+        const auth = await engine.authenticate(configData, configData.proxy);
+        if (!auth) return res.status(401).end();
+        const stalkerCmd = decodeURIComponent(channelId);
+        const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers, timeout: 5000 }));
+
+// Aplica a limpeza (corrige URLs mangled como crystalott)
+let streamUrl = extractUrlFix(linkRes.data?.js);
+
+if (streamUrl && streamUrl.trim()) {
+    global.metaShield[key + '_real'] = streamUrl.trim();
+    console.log(`[META-SHIELD] URL real guardado (limpo): ${streamUrl.substring(0, 70)}...`);
+}
     } catch(e) {
         console.error(`[META-SHIELD] Erro ao criar link: ${e.message}`);
     }
 
+    // Responde com fake TS bytes (sync byte 0x47 + 187 bytes de zeros = 1 packet TS válido)
     const fakeTs = Buffer.alloc(188, 0);
-    fakeTs[0] = 0x47;
+    fakeTs[0] = 0x47; // Sync byte de um pacote MPEG-TS
     res.writeHead(200, {
         'Content-Type': 'video/mp2t',
         'Content-Length': fakeTs.length,
