@@ -620,7 +620,7 @@ setInterval(() => {
   */          
 
 
-Este é o Meta onde tudo funciona as mil maravilhas.
+//Este é o Meta onde tudo funciona as mil maravilhas.
 // ===== METADATA SHIELD: responde ao metadata probe do Tizen sem tocar no portal =====
 app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
     const { config, listIdx, channelId } = req.params;
