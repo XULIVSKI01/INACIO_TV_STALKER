@@ -500,7 +500,6 @@ function updateMasterCheckbox(groupId) {
 });
 
 // Rotas do Stremio
-/*
 // Este é o META ONDE PARECE FUNCIONA TUDO MAS SO FICOU A DUVIDA
 //NO SERVIDOR 200.WF. Vou testar uns dias e ver se realmente funciona.
 // ===== METADATA SHIELD: responde ao metadata probe do Tizen sem tocar no portal =====
@@ -617,9 +616,9 @@ setInterval(() => {
         }
     });
 }, 60000);
-  */          
+            
 
-
+/*
 //Este é o Meta onde tudo funciona as mil maravilhas.
 // ===== METADATA SHIELD: responde ao metadata probe do Tizen sem tocar no portal =====
 app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
@@ -738,7 +737,7 @@ setInterval(() => {
         }
     });
 }, 60000);
-
+*/
 app.get("/:config/manifest.json", async (req, res) => {
     rememberConfig(req.params.config);
     res.json(await addon.getManifest(req.params.config));
