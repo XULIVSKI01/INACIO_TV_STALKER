@@ -112,6 +112,53 @@ for (const path of classicPaths) {
     return null;
 }
 
+// ============================================================
+// 2. CRIAÇÃO DE LINK (create_link unificado)
+// ============================================================
+async function createStreamLink(auth, config, stalkerCmd, type, sNum = null) {
+    const cmdType = (type === "movie" || type === "series") ? "vod" : "itv";
+    const seriesParam = sNum ? `&series=${sNum}` : '';
+    const chCheck = type === "tv" ? "&force_ch_link_check=1" : "";
+    const realCmd = stalkerCmd;
+
+    const opts = getAxiosOpts(config, { headers: auth.authData.headers, timeout: 5000 }, config.proxy);
+
+    // Lista de variantes, por ordem de tentativa
+    const variants = [
+        // 1. cmd sem long_lived (o que funciona no HuggingFace)
+        { url: () => `${auth.api}type=${cmdType}&action=create_link&cmd=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&JsHttpRequest=1-0` },
+        // 2. cmd com long_lived
+        { url: () => `${auth.api}type=${cmdType}&action=create_link&cmd=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0` },
+        // 3. video_id sem long_lived
+        { url: () => `${auth.api}type=${cmdType}&action=create_link&video_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&JsHttpRequest=1-0` },
+        // 4. video_id com long_lived
+        { url: () => `${auth.api}type=${cmdType}&action=create_link&video_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0` }
+    ];
+
+    // Séries — variantes adicionais
+    if (type === "series") {
+        variants.push({ url: () => `${auth.api}type=series&action=create_link&video_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&JsHttpRequest=1-0` });
+        variants.push({ url: () => `${auth.api}type=series&action=create_link&video_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0` });
+    }
+
+    // Filmes e séries — movie_id
+    if (type === "series" || type === "movie") {
+        variants.push({ url: () => `${auth.api}type=vod&action=create_link&movie_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&JsHttpRequest=1-0` });
+        variants.push({ url: () => `${auth.api}type=vod&action=create_link&movie_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0` });
+    }
+
+    // Tentar cada variante até uma devolver URL válido
+    for (const v of variants) {
+        try {
+            const res = await axios.get(v.url(), opts).catch(() => ({}));
+            const url = extractUrl(res.data?.js);
+            if (url) return url;
+        } catch(e) { continue; }
+    }
+
+    return null;
+}
+
 function extractUrl(jsData) {
     if (!jsData) return null;
     let url = jsData?.cmd || jsData?.url || (typeof jsData === 'string' ? jsData : null);
