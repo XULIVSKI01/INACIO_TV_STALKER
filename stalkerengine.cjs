@@ -27,7 +27,7 @@ async function authenticate(config, proxyUrl = null) {
     const shortHash = crypto.createHash('md5').update(mac).digest('hex').substring(0, 13).toUpperCase();
     const serialNumber = `8CA3${shortHash.substring(4)}`;
 
-    const makeHeaders = () => ({
+    const universalHeaders = {
         'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
         'X-User-Agent': `Model: MAG250; SW: 2.18-r14-pub-250; STB_active: true; Device ID: ${deviceId}; Device ID 2: ${deviceId}; Signature: 88e76854; SN: ${serialNumber}`,
         'Referer': `${cleanBase}/c/`,
@@ -38,127 +38,77 @@ async function authenticate(config, proxyUrl = null) {
         'X-Real-IP': fakeResidencialIP,
         'Client-IP': fakeResidencialIP,
         'Cookie': `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe/Lisbon;`
-    });
+    };
 
     const paths = ['/c/portal.php', '/portal.php', '/server/load.php', '/stalker_portal/server/load.php'];
 
-    console.log(`[STB-EMU MODE] Tentando enganar portal (paralelo): ${cleanBase}`);
+    console.log(`[STB-EMU MODE] Tentando enganar portal: ${cleanBase}`);
 
-    const tryPath = async (path) => {
+    for (const path of paths) {
         const fullUrl = `${cleanBase}${path}?`;
-        const headers = makeHeaders();
-        const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
-        const res = await axios.get(handshakeUrl, getAxiosOpts(config, { headers, timeout: 8000 }, proxyUrl));
-        let data = res.data;
-        if (typeof data === 'string') data = JSON.parse(data.replace(/\/\*[\s\S]*?\*\//g, "").trim());
-        if (!data?.js?.token) throw new Error('no token');
-
-        const token = data.js.token;
-        headers.Authorization = `Bearer ${token}`;
-        headers.Cookie += ` token=${token}; access_token=${token};`;
-        try { await axios.get(`${fullUrl}type=stb&action=get_profile&token=${token}&JsHttpRequest=1-0`, getAxiosOpts(config, { headers, timeout: 5000 }, proxyUrl)); } catch(e) {}
-
-        return {
-            api: fullUrl,
-            apiAlt: fullUrl.replace(/\/[^\/]+$/, '/server/load.php?'),
-            token,
-            authData: { sn: data.js.sn || deviceId.substring(0, 13), headers },
-            path
-        };
-    };
-
-    try {
-        const result = await Promise.any(paths.map(p => tryPath(p)));
-        console.log(`[AUTH SUCCESS] Servidor enganado em: ${result.path} (paralelo)`);
-        authCache.set(cacheKey, { data: result, timestamp: Date.now() });
-        return result;
-    } catch (e) {
-        console.warn(`[AUTH] Paralelo falhou, a tentar método clássico...`);
-    }
-
-    const classicBase = cleanBase.replace(/\/c$/, '');
-    const classicPaths = ['/c/portal.php', '/stalker_portal/c/portal.php', '/portal.php', '/server/load.php'];
-
-    try {
-        const classicResults = await Promise.any(classicPaths.map(async (path) => {
-            const fullUrl = `${classicBase}${path}?`;
-            const headers = {
-                'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
-                'Referer': `${classicBase}/c/`,
-                'Accept': '*/*',
-                'Connection': 'keep-alive',
-                'Cookie': `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe/Lisbon;`
-            };
+        try {
             const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
-            const res = await axios.get(handshakeUrl, getAxiosOpts(config, { headers, timeout: 8000 }, proxyUrl));
+            const res = await axios.get(handshakeUrl, getAxiosOpts(config, { headers: universalHeaders, timeout: 5000 }, proxyUrl));
             let data = res.data;
             if (typeof data === 'string') data = JSON.parse(data.replace(/\/\*[\s\S]*?\*\//g, "").trim());
-            if (!data?.js?.token) throw new Error('no token');
+            if (data?.js?.token) {
+                const token = data.js.token;
+                console.log(`[AUTH SUCCESS] Servidor enganado em: ${path}`);
+                universalHeaders.Authorization = `Bearer ${token}`;
+                universalHeaders.Cookie += ` token=${token}; access_token=${token};`;
+                try { await axios.get(`${fullUrl}type=stb&action=get_profile&token=${token}&JsHttpRequest=1-0`, getAxiosOpts(config, { headers: universalHeaders })); } catch (e) { }
+                const result = {
+                    api: fullUrl,
+                    apiAlt: fullUrl.replace(/\/[^\/]+$/, '/server/load.php?'),
+                    token,
+                    authData: { sn: data.js.sn || deviceId.substring(0, 13), headers: universalHeaders }
+                };
+                authCache.set(cacheKey, { data: result, timestamp: Date.now() });
+                return result;
+            }
+        } catch (e) {
+            console.warn(`[AUTH SCAN] ${path} recusado (Status: ${e.response?.status || 'OFFLINE'})`);
+        }
+    }
 
+// Fallback clássico (método antigo, sem IP falso)
+console.log(`[AUTH] Caminhos modernos falharam. A tentar método clássico...`);
+const classicBase = cleanBase.replace(/\/c$/, '');
+const classicPaths = ['/c/portal.php', '/stalker_portal/c/portal.php', '/portal.php', '/server/load.php'];
+
+for (const path of classicPaths) {
+    const fullUrl = `${classicBase}${path}?`;
+    try {
+        const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
+        const classicHeaders = {
+    'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
+    'Referer': `${classicBase}/c/`,
+    'Accept': '*/*',
+    'Connection': 'keep-alive',
+    'Cookie': `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe/Lisbon;`
+};
+        const res = await axios.get(handshakeUrl, getAxiosOpts(config, { headers: classicHeaders, timeout: 8000 }, proxyUrl));
+        let data = res.data;
+        if (typeof data === 'string') data = JSON.parse(data.replace(/\/\*[\s\S]*?\*\//g, "").trim());
+        if (data?.js?.token) {
             const token = data.js.token;
-            headers.Authorization = `Bearer ${token}`;
-            headers.Cookie += ` token=${token}; access_token=${token};`;
-            return {
+            console.log(`[AUTH SUCCESS] Clássico funcionou em: ${path}`);
+            classicHeaders.Authorization = `Bearer ${token}`;
+            classicHeaders.Cookie += ` token=${token}; access_token=${token};`;
+            const result = {
                 api: `${classicBase}${path}?`,
                 apiAlt: `${classicBase}/server/load.php?`,
                 token,
-                authData: { sn: data.js.sn || mac, headers },
-                path
+                authData: { sn: data.js.sn || classicHeaders.sn, headers: classicHeaders }
             };
-        }));
-        console.log(`[AUTH SUCCESS] Clássico funcionou em: ${classicResults.path}`);
-        authCache.set(cacheKey, { data: classicResults, timestamp: Date.now() });
-        return classicResults;
-    } catch(e) {
-        console.error(`[AUTH FATAL] Nenhum caminho funcionou para este MAC.`);
-        return null;
+            authCache.set(cacheKey, { data: result, timestamp: Date.now() });
+            return result;
+        }
+    } catch (e) {
+        console.warn(`[AUTH SCAN] Clássico recusado em ${path} (${e.message})`);
     }
 }
-
-// ============================================================
-// 2. CRIAÇÃO DE LINK (create_link unificado)
-// ============================================================
-async function createStreamLink(auth, config, stalkerCmd, type, sNum = null) {
-    const cmdType = (type === "movie" || type === "series") ? "vod" : "itv";
-    const seriesParam = sNum ? `&series=${sNum}` : '';
-    const chCheck = type === "tv" ? "&force_ch_link_check=1" : "";
-    const realCmd = stalkerCmd;
-
-    const opts = getAxiosOpts(config, { headers: auth.authData.headers, timeout: 5000 }, config.proxy);
-
-    // Lista de variantes, por ordem de tentativa
-    const variants = [
-        // 1. cmd sem long_lived (o que funciona no HuggingFace)
-        { url: () => `${auth.api}type=${cmdType}&action=create_link&cmd=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&JsHttpRequest=1-0` },
-        // 2. cmd com long_lived
-        { url: () => `${auth.api}type=${cmdType}&action=create_link&cmd=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0` },
-        // 3. video_id sem long_lived
-        { url: () => `${auth.api}type=${cmdType}&action=create_link&video_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&JsHttpRequest=1-0` },
-        // 4. video_id com long_lived
-        { url: () => `${auth.api}type=${cmdType}&action=create_link&video_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0` }
-    ];
-
-    // Séries — variantes adicionais
-    if (type === "series") {
-        variants.push({ url: () => `${auth.api}type=series&action=create_link&video_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&JsHttpRequest=1-0` });
-        variants.push({ url: () => `${auth.api}type=series&action=create_link&video_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0` });
-    }
-
-    // Filmes e séries — movie_id
-    if (type === "series" || type === "movie") {
-        variants.push({ url: () => `${auth.api}type=vod&action=create_link&movie_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&JsHttpRequest=1-0` });
-        variants.push({ url: () => `${auth.api}type=vod&action=create_link&movie_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0` });
-    }
-
-    // Tentar cada variante até uma devolver URL válido
-    for (const v of variants) {
-        try {
-            const res = await axios.get(v.url(), opts).catch(() => ({}));
-            const url = extractUrl(res.data?.js);
-            if (url) return url;
-        } catch(e) { continue; }
-    }
-
+    console.error(`[AUTH FATAL] Nenhum caminho ou perfil funcionou para este MAC.`);
     return null;
 }
 
