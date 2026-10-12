@@ -581,27 +581,46 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
     }
 
     // 1º pedido = metadata
-    global.metaShield[key] = now;
-    console.log(`[META-SHIELD] 1º pedido (metadata) → a responder localmente`);
+global.metaShield[key] = now;
+console.log(`[META-SHIELD] 1º pedido (metadata) → a responder localmente`);
 
-    try {
-        const url = await resolveRealUrl();
-        if (url) {
-            global.metaShield[key + '_real'] = url;
-            console.log(`[META-SHIELD] URL real guardado: ${url.substring(0, 70)}...`);
+// ✅ Detectar plataforma — LG WebOS precisa do fake TS antes do redirect
+const uaLower = (req.headers['user-agent'] || '').toLowerCase();
+const isLG = /webos|netcast|lg browser|lg webos|web0s/i.test(uaLower);
+if (isLG) console.log(`[META-SHIELD] LG WebOS detectada → caminho antigo (fake TS primeiro)`);
+
+try {
+    const url = await resolveRealUrl();
+    if (url) {
+        global.metaShield[key + '_real'] = url;
+
+        // Se o cmd já era URL final E não é LG → redirecciona logo (rápido)
+        const stalkerCmd = decodeURIComponent(channelId);
+        const cleanCmd = stalkerCmd.replace(/^['"`]?(ffrt|ffmpeg|ffrt2|rtmp)['"`]?\s+/i, "").trim();
+        const isDirectUrl = (cleanCmd.startsWith('http://') || cleanCmd.startsWith('https://'))
+            && !cleanCmd.includes('localhost') && !cleanCmd.includes('127.0.0.1');
+
+        if (isDirectUrl && !isLG) {
+            global.metaShield[key + '_redirects'] = 1;
+            console.log(`[META-SHIELD] URL já final → redirect imediato (sem fake TS)`);
+            return res.redirect(302, url);
         }
-    } catch(e) {
-        console.error(`[META-SHIELD] Erro ao criar link: ${e.message}`);
-    }
 
-    const fakeTs = Buffer.alloc(188, 0);
-    fakeTs[0] = 0x47;
-    res.writeHead(200, {
-        'Content-Type': 'video/mp2t',
-        'Content-Length': fakeTs.length,
-        'Connection': 'close'
-    });
-    res.end(fakeTs);
+        console.log(`[META-SHIELD] URL real guardado: ${url.substring(0, 70)}...`);
+    }
+} catch(e) {
+    console.error(`[META-SHIELD] Erro ao criar link: ${e.message}`);
+}
+
+// Caminho antigo — usado para LG, ou quando é preciso create_link (localhost)
+const fakeTs = Buffer.alloc(188, 0);
+fakeTs[0] = 0x47;
+res.writeHead(200, {
+    'Content-Type': 'video/mp2t',
+    'Content-Length': fakeTs.length,
+    'Connection': 'close'
+});
+res.end(fakeTs);
 });
 
 // Limpeza do metaShield a cada minuto
