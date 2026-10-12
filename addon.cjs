@@ -705,18 +705,18 @@ async getStreams(type, id, configBase64, host) {
         cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
     }  
 
-      if (cleanUrl.includes('://')) {
+   if (cleanUrl.includes('://')) {
     if (config?.useDirect !== false) {
         const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-        // TV → /meta/ com a URL final (com play_token) para o META-SHIELD não re-processar
+        // TV → /meta/ (META-SHIELD trata dos pedidos duplos do Tizen)
         // Filme/Série → URL directa do portal, sem tocar no servidor (zero banda)
         const finalUrl = (type === 'tv')
-            ? `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(cleanUrl)}?type=${type}`
+            ? `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(realCmd)}?type=${type}`
             : cleanUrl;
         streams.push({ name: '🟢 ' + name, url: finalUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
         directAdded = true;
     }
-      }
+}
   
 } else {
     console.warn(`[STREAMS WARNING] Nenhuma tentativa devolveu link válido para ${id}`);
