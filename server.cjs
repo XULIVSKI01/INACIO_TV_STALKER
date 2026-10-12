@@ -602,7 +602,7 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
         'Connection': 'close'
     });
     res.end(fakeTs);
-
+ });
 // Limpeza do metaShield a cada minuto
 setInterval(() => {
     if (!global.metaShield) return;
