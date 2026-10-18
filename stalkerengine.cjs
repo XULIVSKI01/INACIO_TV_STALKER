@@ -34,9 +34,9 @@ async function authenticate(config, proxyUrl = null) {
         'Accept': 'application/json, text/javascript, */*; q=0.01',
         'X-Runtime-Info': 'render: gles; s_type: 250; s_ver: 0.2.18-r14;',
         'X-Requested-With': 'XMLHttpRequest',
-        'X-Forwarded-For': fakeResidencialIP,
-        'X-Real-IP': fakeResidencialIP,
-        'Client-IP': fakeResidencialIP,
+        //'X-Forwarded-For': fakeResidencialIP,
+        //'X-Real-IP': fakeResidencialIP,
+        //'Client-IP': fakeResidencialIP,
         'Cookie': `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe/Lisbon;`
     };
 
@@ -47,7 +47,8 @@ async function authenticate(config, proxyUrl = null) {
     for (const path of paths) {
         const fullUrl = `${cleanBase}${path}?`;
         try {
-            const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
+            const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0&debug=1`;
+            //const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
             const res = await axios.get(handshakeUrl, getAxiosOpts(config, { headers: universalHeaders, timeout: 5000 }, proxyUrl));
             let data = res.data;
             if (typeof data === 'string') data = JSON.parse(data.replace(/\/\*[\s\S]*?\*\//g, "").trim());
@@ -79,7 +80,8 @@ const classicPaths = ['/c/portal.php', '/stalker_portal/c/portal.php', '/portal.
 for (const path of classicPaths) {
     const fullUrl = `${classicBase}${path}?`;
     try {
-        const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
+       const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0&debug=1`;
+        //const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
         const classicHeaders = {
     'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
     'Referer': `${classicBase}/c/`,
