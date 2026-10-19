@@ -22,6 +22,18 @@ function cleanTitle(title) {
     return title.replace(/\[.*?\]/g, '').replace(/\(.*\)/g, '').replace(/(S\d+|T\d+).*/i, '').replace(/(1080p|720p|4k|uhd|hdtv|x264|x265|hevc|dual|latino|legendado|multi|v1|v2)/gi, '').trim();
 }
 
+// Ponte entre IMDB (Stremio) e TMDB (para obter o nome)
+async function getTmdbNameFromImdb(imdbId, type) {
+    try {
+        const findUrl = `https://api.themoviedb.org/3/find/${imdbId}?api_key=${TMDB_API_KEY}&external_source=imdb_id&language=pt-PT`;
+        const res = await axios.get(findUrl);
+        const results = type === 'movie' ? res.data.movie_results : res.data.tv_results;
+        return results && results.length > 0 ? results[0].name || results[0].title : null;
+    } catch (e) {
+        return null;
+    }
+}
+
 async function parseM3U(url, config) {
     const res = await axios.get(url, {
         timeout: 15000,
@@ -692,6 +704,71 @@ async getStreams(type, id, configBase64, host) {
     console.log(`[STREAMS] Pedido de stream: type=${type}, id=${id}`);
     if (type === "series") await new Promise(resolve => setTimeout(resolve, 800));
 
+    // ===== PONTE CINEMETA / IMDB -> IPTV =====
+    if (id.startsWith('tt')) {
+        console.log(`[STREAMS] Pedido IMDB detetado: ${id}. A procurar no IPTV...`);
+        const [imdbId, season, episode] = id.split(':');
+        const cleanName = await getTmdbNameFromImdb(imdbId, type);
+        
+        if (!cleanName) return { streams: [] };
+        console.log(`[STREAMS] Nome encontrado no TMDB: "${cleanName}"`);
+
+        const lists = this.parseConfig(configBase64);
+        let streams = [];
+
+        for (let lIdx = 0; lIdx < lists.length; lIdx++) {
+            const config = lists[lIdx];
+            const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
+            
+            // Procura no cache do IPTV por este nome
+            const prefix = `stalker_full_${config.url}_${type}_`;
+            const cacheKeys = Object.keys(catalogCache).filter(k => k.startsWith(prefix));
+            
+            for (const ck of cacheKeys) {
+                const cached = catalogCache[ck];
+                if (!cached || !cached.data) continue;
+                
+                for (const item of cached.data) {
+                    const itemName = item.name || item.title || '';
+                    // Verifica se o nome do item do IPTV bate com o nome do TMDB
+                    if (itemName.toLowerCase().includes(cleanName.toLowerCase()) || cleanName.toLowerCase().includes(itemName.toLowerCase())) {
+                        
+                        const realCmd = item.cmd || item.id;
+                        const sId = encodeURIComponent(realCmd + (season ? `|||${episode}` : ''));
+                        const nameStr = encodeURIComponent(itemName);
+
+                        // Adiciona Link Directo (TV)
+                        streams.push({
+                            name: '🟢 ' + config.name,
+                            url: `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(realCmd)}?type=${type}`,
+                            title: `⚡ Directo TV`,
+                            behaviorHints: { notWebReady: true },
+                            contentType: 'video/mp2t'
+                        });
+
+                        // Adiciona Link Proxy (Fallback)
+                        streams.push({
+                            name: '🟢 ' + config.name,
+                            url: `https://${host}/proxy/${encodeURIComponent(configBase64)}/${lIdx}/${sId}?type=${type}`,
+                            title: `🔄 Proxy Estável`,
+                            behaviorHints: { notWebReady: true },
+                            contentType: 'video/mp2t'
+                        });
+                        
+                        break; // Se encontrou num servidor, não precisa de continuar a procurar no mesmo
+                    }
+                }
+            }
+        }
+        
+        console.log(`[STREAMS] Encontrados ${streams.length} links nos servidores para "${cleanName}"`);
+        return { streams };
+    }
+    // ===== FIM DA PONTE =====
+
+    // ... A PARTIR DAQUI O TEU CÓDIGO ORIGINAL CONTINUA (const parts = id.split(":") ...)
+    const parts = id.split(":"); 
+    const lIdxParts = parts[1].split("_");
     const parts = id.split(":"); 
     const lIdxParts = parts[1].split("_");
     const lIdx = parseInt(lIdxParts[0]);
