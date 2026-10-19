@@ -219,99 +219,84 @@ catalogs.push({
     },
     
     async getCatalog(type, id, extra, configBase64) {
-        const normalize = (str) => (str || '').replace(/\s+/g, ' ').trim().toLowerCase();
-        console.log(`[CATALOG] Pedido: type=${type}, id=${id}, genre=${extra.genre || 'N/A'}, skip=${extra.skip || 0}`);
-        const lists = this.parseConfig(configBase64);
-       // ===== PESQUISA (lupa do Stremio) =====
-if (id === "search" && extra.search) {
-    const query = extra.search.toLowerCase().trim();
-    console.log(`[SEARCH] Pesquisa: "${query}" (type=${type})`);
+    const normalize = (str) => (str || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    console.log(`[CATALOG] Pedido: type=${type}, id=${id}, genre=${extra.genre || 'N/A'}, skip=${extra.skip || 0}`);
+    const lists = this.parseConfig(configBase64);
 
-    let allResults = [];
-    const seen = new Set();
+    // ===== PESQUISA (lupa do Stremio) =====
+    if (id === "search" && extra.search) {
+        const query = extra.search.toLowerCase().trim();
+        console.log(`[SEARCH] Pesquisa: "${query}" (type=${type})`);
 
-    for (let lIdx = 0; lIdx < lists.length; lIdx++) {
-        const config = lists[lIdx];
-        const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
+        let allResults = [];
+        const seen = new Set();
 
-        // Xtream
-        if (config.type === 'xtream') {
-            const b = config.url.trim().replace(/\/$/, "");
-            const cacheKey = `xtream_${b}_${config.user}_${type}_all`;
-            let data = catalogCache[cacheKey]?.data;
-            if (!data) {
-                try {
-                    const api = `${b}/player_api.php?username=${encodeURIComponent(config.user)}&password=${encodeURIComponent(config.pass)}`;
-                    const act = type === "movie" ? "get_vod_streams" : "get_series";
-                    const res = await axios.get(`${api}&action=${act}`, this.getAxiosOpts(config, {timeout: 10000}));
-                    data = Array.isArray(res.data) ? res.data : [];
-                    catalogCache[cacheKey] = { data, lastUpdate: Date.now() };
-                } catch(e) { continue; }
-            }
-            data.forEach(item => {
-                const nm = (item.name || item.title || '').toLowerCase();
-                if (nm.includes(query) && !seen.has(nm)) {
-                    seen.add(nm);
-                    allResults.push({
-                        id: `xlv:${lIdx}_${listSig}:${item.stream_id || item.series_id}:${encodeURIComponent(item.name || item.title)}:${encodeURIComponent(item.stream_icon || item.cover || '')}`,
-                        name: item.name || item.title,
-                        type,
-                        poster: item.stream_icon || item.cover,
-                        posterShape: type === "tv" ? "landscape" : "poster"
+        for (let lIdx = 0; lIdx < lists.length; lIdx++) {
+            const config = lists[lIdx];
+            const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
+
+            // Stalker — usa o catalogCache
+            if (config.type === 'stalker') {
+                const prefix = `stalker_full_${config.url}_${type}_`;
+                const cacheKeys = Object.keys(catalogCache).filter(k => k.startsWith(prefix));
+                console.log(`[SEARCH] ${cacheKeys.length} caches encontradas para ${config.url}`);
+                
+                for (const ck of cacheKeys) {
+                    const cached = catalogCache[ck];
+                    if (!cached || !cached.data) continue;
+                    cached.data.forEach(m => {
+                        const nm = (m.name || m.title || '').toLowerCase();
+                        if (nm.includes(query) && !seen.has(nm)) {
+                            seen.add(nm);
+                            const targetId = m.cmd || m.id;
+                            allResults.push({
+                                id: `xlv:${lIdx}_${listSig}:${encodeURIComponent(targetId)}:${encodeURIComponent(m.name || m.title)}:${encodeURIComponent(m.logo || m.screenshot_uri || '')}`,
+                                name: m.name || m.title,
+                                type,
+                                poster: m.logo || m.screenshot_uri,
+                                posterShape: type === "tv" ? "landscape" : "poster"
+                            });
+                        }
                     });
                 }
-            });
-        }
-        // Stalker — usa o catalogCache que já existe
-        else if (config.type === 'stalker') {
-            const cacheKeys = Object.keys(catalogCache).filter(k =>
-                k.startsWith(`stalker_full_${config.url}_${type}_`)
-            );
-            for (const ck of cacheKeys) {
-                const cached = catalogCache[ck];
-                if (!cached || !cached.data) continue;
-                cached.data.forEach(m => {
-                    const nm = (m.name || m.title || '').toLowerCase();
+            }
+            // Xtream
+            else if (config.type === 'xtream') {
+                const b = config.url.trim().replace(/\/$/, "");
+                const cacheKey = `xtream_${b}_${config.user}_${type}_all`;
+                let data = catalogCache[cacheKey]?.data;
+                if (!data) {
+                    try {
+                        const api = `${b}/player_api.php?username=${encodeURIComponent(config.user)}&password=${encodeURIComponent(config.pass)}`;
+                        const act = type === "movie" ? "get_vod_streams" : "get_series";
+                        const res = await axios.get(`${api}&action=${act}`, this.getAxiosOpts(config, {timeout: 10000}));
+                        data = Array.isArray(res.data) ? res.data : [];
+                        catalogCache[cacheKey] = { data, lastUpdate: Date.now() };
+                    } catch(e) { continue; }
+                }
+                data.forEach(item => {
+                    const nm = (item.name || item.title || '').toLowerCase();
                     if (nm.includes(query) && !seen.has(nm)) {
                         seen.add(nm);
-                        const targetId = m.cmd || m.id;
                         allResults.push({
-                            id: `xlv:${lIdx}_${listSig}:${encodeURIComponent(targetId)}:${encodeURIComponent(m.name || m.title)}:${encodeURIComponent(m.logo || m.screenshot_uri || '')}`,
-                            name: m.name || m.title,
+                            id: `xlv:${lIdx}_${listSig}:${item.stream_id || item.series_id}:${encodeURIComponent(item.name || item.title)}:${encodeURIComponent(item.stream_icon || item.cover || '')}`,
+                            name: item.name || item.title,
                             type,
-                            poster: m.logo || m.screenshot_uri,
+                            poster: item.stream_icon || item.cover,
                             posterShape: type === "tv" ? "landscape" : "poster"
                         });
                     }
                 });
             }
         }
-        // M3U
-        else if (config.type === 'm3u') {
-            try {
-                const channels = await parseM3U(config.m3uUrl, config);
-                channels.forEach(c => {
-                    const nm = (c.name || '').toLowerCase();
-                    if (nm.includes(query) && !seen.has(nm)) {
-                        seen.add(nm);
-                        allResults.push({
-                            id: `xlv:${lIdx}_${listSig}:${encodeURIComponent(c.url)}:${encodeURIComponent(c.name)}:${encodeURIComponent(c.logo || '')}`,
-                            name: c.name,
-                            type: 'tv',
-                            poster: c.logo,
-                            posterShape: 'landscape'
-                        });
-                    }
-                });
-            } catch(e) {}
-        }
-    }
 
-    console.log(`[SEARCH] ${allResults.length} resultados para "${query}"`);
-    return { metas: allResults.slice(0, 50) };
-} 
-        const lIdx = parseInt(id.split('_')[1]);
-        const config = lists[lIdx]; if (!config) return { metas: [] };
+        console.log(`[SEARCH] ${allResults.length} resultados para "${query}"`);
+        return { metas: allResults.slice(0, 50) };
+    }
+    // ===== FIM DA PESQUISA =====
+
+    const lIdx = parseInt(id.split('_')[1]);
+    const config = lists[lIdx]; if (!config) return { metas: [] };
 
         const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
         const skip = parseInt(extra.skip) || 0;
