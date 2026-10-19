@@ -1,13 +1,5 @@
 // stalkerengine.cjs – Motor centralizado para portais Stalker
 const axios = require("axios");
-// Tenta importar a biblioteca de bypass de forma segura
-let CurlSession = null;
-try {
-    const curlCffi = require('curl-cffi-node');
-    CurlSession = curlCffi.Session || curlCffi.CurlSession;
-} catch (e) {
-    console.warn("[ENGINE] curl-cffi-node não instalado. A usar axios padrão.");
-}
 const crypto = require("crypto");
 const https = require('https');
 const { PassThrough } = require('stream');
@@ -17,153 +9,6 @@ const { spawn } = require('child_process');
 const authCache = new Map();
 const CACHE_TTL = 10 * 60 * 1000;
 
-async function authenticate(config, proxyUrl = null) {
-    const mac = (config.mac || "00:1A:79:00:00:00").toUpperCase();
-    const cleanBase = config.url.trim().replace(/\/$/, "");
-    const cacheKey = `auth_${cleanBase}_${mac}`;
-
-    if (authCache.has(cacheKey)) {
-        const cached = authCache.get(cacheKey);
-        if (Date.now() - cached.timestamp < CACHE_TTL) return cached.data;
-    }
-
-    const fakeResidencialIP = '188.81.121.45';
-    const deviceId = crypto.createHash('md5').update(mac).digest('hex').toUpperCase();
-    const shortHash = crypto.createHash('md5').update(mac).digest('hex').substring(0, 13).toUpperCase();
-    const serialNumber = `8CA3${shortHash.substring(4)}`;
-
-    const universalHeaders = {
-        'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
-        'X-User-Agent': `Model: MAG250; SW: 2.18-r14-pub-250; STB_active: true; Device ID: ${deviceId}; Device ID 2: ${deviceId}; Signature: 88e76854; SN: ${serialNumber}`,
-        'Referer': `${cleanBase}/c/`,
-        'Accept': 'application/json, text/javascript, */*; q=0.01',
-        'X-Runtime-Info': 'render: gles; s_type: 250; s_ver: 0.2.18-r14;',
-        'X-Requested-With': 'XMLHttpRequest',
-        'X-Forwarded-For': fakeResidencialIP,
-        'X-Real-IP': fakeResidencialIP,
-        'Client-IP': fakeResidencialIP,
-        'Cookie': `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe/Lisbon;`
-    };
-
-    const paths = ['/c/portal.php', '/portal.php', '/server/load.php', '/stalker_portal/server/load.php'];
-
-    // ===== DETEÇÃO DE SERVIDORES PROTEGIDOS =====
-    const CLOUDFLARE_SERVERS = ['faria1.102025.com']; 
-    const isCloudflare = CLOUDFLARE_SERVERS.some(s => cleanBase.includes(s));
-
-    console.log(`[STB-EMU MODE] Tentando enganar portal: ${cleanBase} ${isCloudflare && CurlSession ? '(Via Cloudflare Bypass)' : ''}`);
-
-    for (const path of paths) {
-        const fullUrl = `${cleanBase}${path}?`;
-        try {
-            const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
-            let data;
-
-            if (isCloudflare && CurlSession) {
-                // BYPASS CLOUDFLARE usando a API Session correta
-                const session = new CurlSession({ impersonate: 'chrome120' });
-                if (proxyUrl) session.proxy = proxyUrl;
-                
-                const res = await session.get(handshakeUrl, { headers: universalHeaders });
-                data = res.text || res.body; 
-            } else {
-                // PADRÃO: Axios normal para todos os outros servidores
-                const res = await axios.get(handshakeUrl, getAxiosOpts(config, { headers: universalHeaders, timeout: 5000 }, proxyUrl));
-                data = res.data;
-            }
-
-            if (typeof data === 'string') data = JSON.parse(data.replace(/\/\*[\s\S]*?\*\//g, "").trim());
-            
-            if (data?.js?.token) {
-                const token = data.js.token;
-                console.log(`[AUTH SUCCESS] Servidor enganado em: ${path} ${isCloudflare ? '(Bypassed)' : ''}`);
-                
-                const authHeaders = { ...universalHeaders };
-                authHeaders.Authorization = `Bearer ${token}`;
-                authHeaders.Cookie += ` token=${token}; access_token=${token};`;
-
-                try { 
-                    if (isCloudflare && CurlSession) {
-                        const session2 = new CurlSession({ impersonate: 'chrome120' });
-                        if (proxyUrl) session2.proxy = proxyUrl;
-                        await session2.get(`${fullUrl}type=stb&action=get_profile&token=${token}&JsHttpRequest=1-0`, { headers: authHeaders });
-                    } else {
-                        await axios.get(`${fullUrl}type=stb&action=get_profile&token=${token}&JsHttpRequest=1-0`, getAxiosOpts(config, { headers: authHeaders }));
-                    }
-                } catch (e) { }
-
-                const result = {
-                    api: fullUrl,
-                    apiAlt: fullUrl.replace(/\/[^\/]+$/, '/server/load.php?'),
-                    token,
-                    authData: { sn: data.js.sn || deviceId.substring(0, 13), headers: authHeaders }
-                };
-                authCache.set(cacheKey, { data: result, timestamp: Date.now() });
-                return result;
-            }
-        } catch (e) {
-            const body = e.response?.data ? String(e.response.data).replace(/\s+/g, ' ').substring(0, 100) : 'vazio';
-            console.warn(`[AUTH SCAN] ${path} recusado (Status: ${e.response?.status || 'OFFLINE'}) | Body: ${body}`);
-        }
-    }
-
-    // Fallback clássico
-    console.log(`[AUTH] Caminhos modernos falharam. A tentar método clássico...`);
-    const classicBase = cleanBase.replace(/\/c$/, '');
-    const classicPaths = ['/c/portal.php', '/stalker_portal/c/portal.php', '/portal.php', '/server/load.php'];
-
-    for (const path of classicPaths) {
-        const fullUrl = `${classicBase}${path}?`;
-        try {
-            const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
-            const classicHeaders = {
-                'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
-                'Referer': `${classicBase}/c/`,
-                'Accept': '*/*',
-                'Connection': 'keep-alive',
-                'Cookie': `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe/Lisbon;`
-            };
-            
-            let data;
-            if (isCloudflare && CurlSession) {
-                const session = new CurlSession({ impersonate: 'chrome120' });
-                if (proxyUrl) session.proxy = proxyUrl;
-                const res = await session.get(handshakeUrl, { headers: classicHeaders });
-                data = res.text || res.body;
-            } else {
-                const res = await axios.get(handshakeUrl, getAxiosOpts(config, { headers: classicHeaders, timeout: 8000 }, proxyUrl));
-                data = res.data;
-            }
-
-            if (typeof data === 'string') data = JSON.parse(data.replace(/\/\*[\s\S]*?\*\//g, "").trim());
-            
-            if (data?.js?.token) {
-                const token = data.js.token;
-                console.log(`[AUTH SUCCESS] Clássico funcionou em: ${path}`);
-                const authHeaders = { ...classicHeaders };
-                authHeaders.Authorization = `Bearer ${token}`;
-                authHeaders.Cookie += ` token=${token}; access_token=${token};`;
-                
-                const result = {
-                    api: `${classicBase}${path}?`,
-                    apiAlt: `${classicBase}/server/load.php?`,
-                    token,
-                    authData: { sn: data.js.sn || authHeaders.sn, headers: authHeaders }
-                };
-                authCache.set(cacheKey, { data: result, timestamp: Date.now() });
-                return result;
-            }
-        } catch (e) {
-            const body = e.response?.data ? String(e.response.data).replace(/\s+/g, ' ').substring(0, 100) : 'vazio';
-            console.warn(`[AUTH SCAN] Clássico recusado em ${path} (${e.message}) | Body: ${body}`);
-        }
-    }
-    
-    console.error(`[AUTH FATAL] Nenhum caminho ou perfil funcionou para este MAC.`);
-    return null;
-}
-
-/*
 // ============================================================
 // 1. AUTENTICAÇÃO (copiada do addon.cjs, com suporte a proxy)
 // ============================================================
@@ -185,9 +30,8 @@ async function authenticate(config, proxyUrl = null) {
     const universalHeaders = {
         'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
         'X-User-Agent': `Model: MAG250; SW: 2.18-r14-pub-250; STB_active: true; Device ID: ${deviceId}; Device ID 2: ${deviceId}; Signature: 88e76854; SN: ${serialNumber}`,
-        'Referer': `${cleanBase}/c/`, */
-      //'Accept': 'application/json, text/javascript, */*; q=0.01',
-/*
+        'Referer': `${cleanBase}/c/`, 
+        'Accept': 'application/json, text/javascript, */*; q=0.01',
         'X-Runtime-Info': 'render: gles; s_type: 250; s_ver: 0.2.18-r14;',
         'X-Requested-With': 'XMLHttpRequest',
         'X-Forwarded-For': fakeResidencialIP,
@@ -239,9 +83,9 @@ for (const path of classicPaths) {
         const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
         const classicHeaders = {
     'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
-    'Referer': `${classicBase}/c/`, */
-//    'Accept': '*/*',
-   /* 'Connection': 'keep-alive',
+    'Referer': `${classicBase}/c/`, 
+    'Accept': '*/*',
+    'Connection': 'keep-alive',
     'Cookie': `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe/Lisbon;`
 };
         const res = await axios.get(handshakeUrl, getAxiosOpts(config, { headers: classicHeaders, timeout: 8000 }, proxyUrl));
@@ -269,7 +113,7 @@ for (const path of classicPaths) {
     console.error(`[AUTH FATAL] Nenhum caminho ou perfil funcionou para este MAC.`);
     return null;
 }
-*/
+
 // ============================================================
 // 2. CRIAÇÃO DE LINK (create_link unificado)
 // ============================================================
