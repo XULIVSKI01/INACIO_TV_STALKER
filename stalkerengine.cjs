@@ -1,5 +1,13 @@
 // stalkerengine.cjs – Motor centralizado para portais Stalker
 const axios = require("axios");
+// Tenta importar a biblioteca de bypass de forma segura
+let CurlSession = null;
+try {
+    const curlCffi = require('curl-cffi-node');
+    CurlSession = curlCffi.Session || curlCffi.CurlSession;
+} catch (e) {
+    console.warn("[ENGINE] curl-cffi-node não instalado. A usar axios padrão.");
+}
 const crypto = require("crypto");
 const https = require('https');
 const { PassThrough } = require('stream');
@@ -8,14 +16,6 @@ const { spawn } = require('child_process');
 // Cache de autenticação (10 minutos)
 const authCache = new Map();
 const CACHE_TTL = 10 * 60 * 1000;
-
-// Tenta importar a biblioteca de bypass de forma segura (se falhar, o servidor não crasha)
-let curlCffi = null;
-try {
-    curlCffi = require('curl-cffi-node');
-} catch (e) {
-    console.warn("[ENGINE] curl-cffi-node não instalado. A usar axios padrão.");
-}
 
 async function authenticate(config, proxyUrl = null) {
     const mac = (config.mac || "00:1A:79:00:00:00").toUpperCase();
@@ -51,7 +51,7 @@ async function authenticate(config, proxyUrl = null) {
     const CLOUDFLARE_SERVERS = ['faria1.102025.com']; 
     const isCloudflare = CLOUDFLARE_SERVERS.some(s => cleanBase.includes(s));
 
-    console.log(`[STB-EMU MODE] Tentando enganar portal: ${cleanBase} ${isCloudflare && curlCffi ? '(Via Cloudflare Bypass)' : ''}`);
+    console.log(`[STB-EMU MODE] Tentando enganar portal: ${cleanBase} ${isCloudflare && CurlSession ? '(Via Cloudflare Bypass)' : ''}`);
 
     for (const path of paths) {
         const fullUrl = `${cleanBase}${path}?`;
@@ -59,16 +59,13 @@ async function authenticate(config, proxyUrl = null) {
             const handshakeUrl = `${fullUrl}type=stb&action=handshake&mac=${encodeURIComponent(mac)}&JsHttpRequest=1-0`;
             let data;
 
-            if (isCloudflare && curlCffi) {
-                // BYPASS CLOUDFLARE: Usa Chrome 120 imitado
-                const res = await curlCffi.request(handshakeUrl, {
-                    method: 'GET',
-                    headers: universalHeaders,
-                    impersonate: 'chrome_120',
-                    proxy: proxyUrl,
-                    timeout: 10000
-                });
-                data = res.body;
+            if (isCloudflare && CurlSession) {
+                // BYPASS CLOUDFLARE usando a API Session correta
+                const session = new CurlSession({ impersonate: 'chrome120' });
+                if (proxyUrl) session.proxy = proxyUrl;
+                
+                const res = await session.get(handshakeUrl, { headers: universalHeaders });
+                data = res.text || res.body; 
             } else {
                 // PADRÃO: Axios normal para todos os outros servidores
                 const res = await axios.get(handshakeUrl, getAxiosOpts(config, { headers: universalHeaders, timeout: 5000 }, proxyUrl));
@@ -86,10 +83,10 @@ async function authenticate(config, proxyUrl = null) {
                 authHeaders.Cookie += ` token=${token}; access_token=${token};`;
 
                 try { 
-                    if (isCloudflare && curlCffi) {
-                        await curlCffi.request(`${fullUrl}type=stb&action=get_profile&token=${token}&JsHttpRequest=1-0`, {
-                            method: 'GET', headers: authHeaders, impersonate: 'chrome_120', proxy: proxyUrl, timeout: 5000
-                        });
+                    if (isCloudflare && CurlSession) {
+                        const session2 = new CurlSession({ impersonate: 'chrome120' });
+                        if (proxyUrl) session2.proxy = proxyUrl;
+                        await session2.get(`${fullUrl}type=stb&action=get_profile&token=${token}&JsHttpRequest=1-0`, { headers: authHeaders });
                     } else {
                         await axios.get(`${fullUrl}type=stb&action=get_profile&token=${token}&JsHttpRequest=1-0`, getAxiosOpts(config, { headers: authHeaders }));
                     }
@@ -110,7 +107,7 @@ async function authenticate(config, proxyUrl = null) {
         }
     }
 
-    // Fallback clássico (mantido igual ao teu)
+    // Fallback clássico
     console.log(`[AUTH] Caminhos modernos falharam. A tentar método clássico...`);
     const classicBase = cleanBase.replace(/\/c$/, '');
     const classicPaths = ['/c/portal.php', '/stalker_portal/c/portal.php', '/portal.php', '/server/load.php'];
@@ -128,11 +125,11 @@ async function authenticate(config, proxyUrl = null) {
             };
             
             let data;
-            if (isCloudflare && curlCffi) {
-                const res = await curlCffi.request(handshakeUrl, {
-                    method: 'GET', headers: classicHeaders, impersonate: 'chrome_120', proxy: proxyUrl, timeout: 10000
-                });
-                data = res.body;
+            if (isCloudflare && CurlSession) {
+                const session = new CurlSession({ impersonate: 'chrome120' });
+                if (proxyUrl) session.proxy = proxyUrl;
+                const res = await session.get(handshakeUrl, { headers: classicHeaders });
+                data = res.text || res.body;
             } else {
                 const res = await axios.get(handshakeUrl, getAxiosOpts(config, { headers: classicHeaders, timeout: 8000 }, proxyUrl));
                 data = res.data;
