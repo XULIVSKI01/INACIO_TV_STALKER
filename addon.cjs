@@ -199,6 +199,19 @@ const addon = {
             }
         }));
         const addonName = lists.map(l => l.name).filter(Boolean).join(" + ") || "XuloV Hub";
+        // Catálogos de pesquisa (lupa do Stremio)
+catalogs.push({
+    type: "movie",
+    id: "search",
+    name: "🔍 Pesquisar Filmes (IPTV)",
+    extra: [{ name: "search", isRequired: true }]
+});
+catalogs.push({
+    type: "series",
+    id: "search",
+    name: "🔍 Pesquisar Séries (IPTV)",
+    extra: [{ name: "search", isRequired: true }]
+});
         const m = { id: "org.xulov.stalker", version: "5.3.0", name: addonName, resources: ["catalog", "stream", "meta"], types: ["tv", "movie", "series"], idPrefixes: ["xlv:"], catalogs: catalogs };
         setCache(cacheKey, m, 60); 
         console.log("[MANIFEST] Manifest gerado com sucesso.");
@@ -209,6 +222,94 @@ const addon = {
         const normalize = (str) => (str || '').replace(/\s+/g, ' ').trim().toLowerCase();
         console.log(`[CATALOG] Pedido: type=${type}, id=${id}, genre=${extra.genre || 'N/A'}, skip=${extra.skip || 0}`);
         const lists = this.parseConfig(configBase64);
+       // ===== PESQUISA (lupa do Stremio) =====
+if (id === "search" && extra.search) {
+    const query = extra.search.toLowerCase().trim();
+    console.log(`[SEARCH] Pesquisa: "${query}" (type=${type})`);
+
+    let allResults = [];
+    const seen = new Set();
+
+    for (let lIdx = 0; lIdx < lists.length; lIdx++) {
+        const config = lists[lIdx];
+        const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
+
+        // Xtream
+        if (config.type === 'xtream') {
+            const b = config.url.trim().replace(/\/$/, "");
+            const cacheKey = `xtream_${b}_${config.user}_${type}_all`;
+            let data = catalogCache[cacheKey]?.data;
+            if (!data) {
+                try {
+                    const api = `${b}/player_api.php?username=${encodeURIComponent(config.user)}&password=${encodeURIComponent(config.pass)}`;
+                    const act = type === "movie" ? "get_vod_streams" : "get_series";
+                    const res = await axios.get(`${api}&action=${act}`, this.getAxiosOpts(config, {timeout: 10000}));
+                    data = Array.isArray(res.data) ? res.data : [];
+                    catalogCache[cacheKey] = { data, lastUpdate: Date.now() };
+                } catch(e) { continue; }
+            }
+            data.forEach(item => {
+                const nm = (item.name || item.title || '').toLowerCase();
+                if (nm.includes(query) && !seen.has(nm)) {
+                    seen.add(nm);
+                    allResults.push({
+                        id: `xlv:${lIdx}_${listSig}:${item.stream_id || item.series_id}:${encodeURIComponent(item.name || item.title)}:${encodeURIComponent(item.stream_icon || item.cover || '')}`,
+                        name: item.name || item.title,
+                        type,
+                        poster: item.stream_icon || item.cover,
+                        posterShape: type === "tv" ? "landscape" : "poster"
+                    });
+                }
+            });
+        }
+        // Stalker — usa o catalogCache que já existe
+        else if (config.type === 'stalker') {
+            const cacheKeys = Object.keys(catalogCache).filter(k =>
+                k.startsWith(`stalker_full_${config.url}_${type}_`)
+            );
+            for (const ck of cacheKeys) {
+                const cached = catalogCache[ck];
+                if (!cached || !cached.data) continue;
+                cached.data.forEach(m => {
+                    const nm = (m.name || m.title || '').toLowerCase();
+                    if (nm.includes(query) && !seen.has(nm)) {
+                        seen.add(nm);
+                        const targetId = m.cmd || m.id;
+                        allResults.push({
+                            id: `xlv:${lIdx}_${listSig}:${encodeURIComponent(targetId)}:${encodeURIComponent(m.name || m.title)}:${encodeURIComponent(m.logo || m.screenshot_uri || '')}`,
+                            name: m.name || m.title,
+                            type,
+                            poster: m.logo || m.screenshot_uri,
+                            posterShape: type === "tv" ? "landscape" : "poster"
+                        });
+                    }
+                });
+            }
+        }
+        // M3U
+        else if (config.type === 'm3u') {
+            try {
+                const channels = await parseM3U(config.m3uUrl, config);
+                channels.forEach(c => {
+                    const nm = (c.name || '').toLowerCase();
+                    if (nm.includes(query) && !seen.has(nm)) {
+                        seen.add(nm);
+                        allResults.push({
+                            id: `xlv:${lIdx}_${listSig}:${encodeURIComponent(c.url)}:${encodeURIComponent(c.name)}:${encodeURIComponent(c.logo || '')}`,
+                            name: c.name,
+                            type: 'tv',
+                            poster: c.logo,
+                            posterShape: 'landscape'
+                        });
+                    }
+                });
+            } catch(e) {}
+        }
+    }
+
+    console.log(`[SEARCH] ${allResults.length} resultados para "${query}"`);
+    return { metas: allResults.slice(0, 50) };
+} 
         const lIdx = parseInt(id.split('_')[1]);
         const config = lists[lIdx]; if (!config) return { metas: [] };
 
