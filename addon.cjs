@@ -224,7 +224,7 @@ catalogs.push({
     name: "🔍 Pesquisar Séries (IPTV)",
     extra: [{ name: "search", isRequired: true }]
 });
-        const m = { id: "org.xulov.stalker", version: "5.3.0", name: addonName, resources: ["catalog", "stream", "meta"], types: ["tv", "movie", "series"], idPrefixes: ["xlv:"], catalogs: catalogs };
+        const m = { id: "org.xulov.stalker", version: "5.3.0", name: addonName, resources: ["catalog", "stream", "meta"], types: ["tv", "movie", "series"], idPrefixes: ["xlv":"tt"], catalogs: catalogs };
         setCache(cacheKey, m, 60); 
         console.log("[MANIFEST] Manifest gerado com sucesso.");
         return m;
@@ -465,6 +465,7 @@ catalogs.push({
 
     async getMeta(type, id, configBase64) {
         console.log(`[META] Pedido: type=${type}, id=${id}`);
+        if (id.startsWith('tt')) return { meta: {} }; // Deixa o Cinemeta tratar dos metadados
         const parts = id.split(":");
         const lIdxParts = parts[1].split("_");
         const lIdx = parseInt(lIdxParts[0]);
