@@ -743,56 +743,50 @@ async getStreams(type, id, configBase64, host) {
             }
 
             if (foundItem) {
-                console.log(`[STREAMS] Encontrado no IPTV: ${foundItem.name || foundItem.title}`);
-                try {
-                    const auth = await engine.authenticate(config, config.proxy);
-                    if (auth) {
-                        const realCmd = foundItem.cmd || foundItem.id;
-                        let sNum = (season && episode) ? episode : null;
+    console.log(`[STREAMS] Encontrado no IPTV: ${foundItem.name || foundItem.title}`);
+    try {
+        const auth = await engine.authenticate(config, config.proxy);
+        if (auth) {
+            const realCmd = foundItem.cmd || foundItem.id;
+            // Se for série, o sNum tem de ser o episódio. Ex: "|||1"
+            let sNum = (season && episode) ? episode : null;
+            
+            let cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
+
+            if (cmdUrl) {
+                let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
+                if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
+                    cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
+                }
+
+                if (cleanUrl.includes('://') && !cleanUrl.includes('.com:80/c')) { 
+                    // Verifica se o link é válido e não é a página do portal
+                    const titleStr = type === 'movie' ? '🎬 Directo Filme' : `🍿 Directo Série - ${cleanName}`;
+                    
+                    if (config?.useDirect !== false) {
+                        // Se for TV usa o META-SHIELD, senão usa o link direto do vídeo
+                        const finalUrl = (type === 'tv')
+                            ? `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(realCmd)}?type=${type}`
+                            : cleanUrl;
                         
-                        let cmdUrl = null;
-                        try {
-                            cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
-                        } catch(e) { console.error(`[STREAM ERROR] createStreamLink falhou:`, e.message); }
-
-                        if (cmdUrl) {
-                            let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
-                            if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
-                                cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
-                            }
-
-                            const titleStr = type === 'movie' ? '🎬 Directo Filme' : `🍿 Directo Série - ${cleanName}`;
-
-                            if (config?.useDirect !== false) {
-                                const finalUrl = (type === 'tv')
-                                    ? `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(realCmd)}?type=${type}`
-                                    : cleanUrl;
-                                
-                                searchStreams.push({
-                                    name: '🟢 ' + (config.name || 'IPTV'),
-                                    url: finalUrl,
-                                    title: titleStr,
-                                    behaviorHints: { notWebReady: type === 'tv' },
-                                    contentType: type === 'tv' ? 'video/mp2t' : undefined
-                                });
-                            }
-
-                            if (config?.useProxy !== false) {
-                                const pUrl = `https://${host}/proxy/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(realCmd + (sNum ? '|||'+sNum : ''))}?type=${type}`;
-                                searchStreams.push({
-                                    name: '🟢 ' + (config.name || 'IPTV'),
-                                    url: pUrl,
-                                    title: `🔄 Proxy Estável`,
-                                    behaviorHints: { notWebReady: type === 'tv' },
-                                    contentType: type === 'tv' ? 'video/mp2t' : undefined
-                                });
-                            }
-                        }
+                        searchStreams.push({
+                            name: '🟢 ' + (config.name || 'IPTV'),
+                            url: finalUrl,
+                            title: titleStr,
+                            behaviorHints: { notWebReady: type === 'tv' },
+                            contentType: type === 'tv' ? 'video/mp2t' : undefined
+                        });
+                        console.log(`[STREAMS] Link Directo adicionado: ${finalUrl.substring(0, 50)}...`);
                     }
-                } catch(e) {
-                    console.error(`[STREAMS] Erro na ponte IMDB para ${config.url}:`, e.message);
+                } else {
+                    console.log(`[STREAMS] Link inválido gerado (parece ser a página do portal): ${cleanUrl}`);
                 }
             }
+        }
+    } catch(e) {
+        console.error(`[STREAMS] Erro na ponte IMDB para ${config.url}:`, e.message);
+    }
+}
         }
 
         console.log(`[STREAMS] Ponte IMDB devolveu ${searchStreams.length} links.`);
