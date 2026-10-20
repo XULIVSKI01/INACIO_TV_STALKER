@@ -747,6 +747,12 @@ if (!id.startsWith('xlv:')) {
     if (!titleInfo || !titleInfo.name) return { streams: [] };
     console.log(`[STREAMS] Nome no TMDB: "${titleInfo.name}" | T${season || '-'} E${episode || '-'}`);
 
+    // Prepara as palavras para a pesquisa inteligente
+    const normalize = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
+    const targetName = normalize(titleInfo.name);
+    // Ignora palavras pequenas como "the", "of", "and"
+    const searchWords = targetName.split(' ').filter(w => w.length > 2 && !['the', 'and', 'of', 'a'].includes(w));
+
     const lists = this.parseConfig(configBase64);
     let found = false;
 
@@ -758,7 +764,8 @@ if (!id.startsWith('xlv:')) {
         if (!auth) continue;
 
         const apiBase = `${auth.api}sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
-        const opts = engine.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 10000 });
+        // Aumentámos o timeout para 15s porque o portal está lento
+        const opts = engine.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 15000 });
         const sType = type === "movie" ? "vod" : "series";
 
         let foundItem = null;
@@ -767,22 +774,31 @@ if (!id.startsWith('xlv:')) {
                 const r = await axios.get(`${apiBase}&type=${sType}&action=get_ordered_list&p=${page}`, opts);
                 const data = r.data?.js?.data || r.data?.js || [];
                 const items = Array.isArray(data) ? data : Object.values(data);
-                const normalize = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, '');
-                const targetName = normalize(titleInfo.name);
                 
                 foundItem = items.find(item => {
-                    const name = normalize(item.name || item.title || '');
-                    return name.includes(targetName);
+                    const itemName = normalize(item.name || item.title || '');
+                    
+                    // 1. Verifica se o nome do portal contém o nome do TMDB
+                    if (itemName.includes(targetName)) return true;
+                    
+                    // 2. Verifica se o nome do TMDB contém o nome do portal
+                    if (targetName.includes(itemName)) return true;
+                    
+                    // 3. Verifica se as palavras principais batem (ex: "dead" e "city")
+                    if (searchWords.length > 0 && searchWords.every(w => itemName.includes(w))) return true;
+                    
+                    return false;
                 });
                 if (foundItem) break;
-            } catch (e) { }
+            } catch (e) { 
+                console.log(`[STREAMS] Erro na pesquisa página ${page}: ${e.message}`);
+            }
         }
 
         if (foundItem) {
             console.log(`[STREAMS] Encontrado no portal: ${foundItem.name || foundItem.title}`);
             let base64Cmd = foundItem.cmd || foundItem.id;
 
-            // Se for série, temos de ir buscar o comando exato da temporada!
             if (type === 'series' && season) {
                 try {
                     const sId = foundItem.id;
@@ -809,7 +825,6 @@ if (!id.startsWith('xlv:')) {
             const sidStr = encodeURIComponent(base64Cmd + epString);
             const nameStr = encodeURIComponent(foundItem.name || foundItem.title || 'Stream');
             
-            // Substitui o ID pelo exato formato interno
             id = `xlv:${lIdx}_${listSig}:${sidStr}:${nameStr}`;
             console.log(`[STREAMS] ID interno mapeado com sucesso.`);
             found = true;
