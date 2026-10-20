@@ -780,22 +780,38 @@ if (!id.startsWith('xlv:')) {
 
         if (foundItem) {
             console.log(`[STREAMS] Encontrado no portal: ${foundItem.name || foundItem.title}`);
-            
-            let cmdStr = foundItem.cmd || foundItem.id;
-            if (typeof cmdStr === 'object') {
-                cmdStr = JSON.stringify(cmdStr);
+            let base64Cmd = foundItem.cmd || foundItem.id;
+
+            // Se for série, temos de ir buscar o comando exato da temporada!
+            if (type === 'series' && season) {
+                try {
+                    const sId = foundItem.id;
+                    const rFirst = await axios.get(`${apiBase}&type=series&action=get_ordered_list&movie_id=${sId}`, opts);
+                    const levels = rFirst.data?.js?.data || rFirst.data?.js || [];
+                    const seasonItem = levels.find(lvl => {
+                        const num = parseInt((lvl.name || "").match(/season\s*(\d+)|temporada\s*(\d+)|s(\d+)/i)?.[1] || (lvl.name || "").match(/\d+/)?.[0]);
+                        return num === parseInt(season) || (lvl.name || "").includes(season);
+                    });
+                    if (seasonItem) {
+                        base64Cmd = seasonItem.cmd || seasonItem.id;
+                    }
+                } catch(e) { }
             }
-            
-            // O SEGREDO ESTÁ AQUI: Converte o comando para Base64 (tal como o addon nativo)
-            const base64Cmd = Buffer.from(cmdStr).toString('base64');
-            
+
+            if (typeof base64Cmd === 'object') {
+                base64Cmd = Buffer.from(JSON.stringify(base64Cmd)).toString('base64');
+            } else if (typeof base64Cmd === 'string' && base64Cmd.startsWith('{')) {
+                base64Cmd = Buffer.from(base64Cmd).toString('base64');
+            }
+
             const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
             const epString = (season && episode) ? `|||${episode}` : '';
             const sidStr = encodeURIComponent(base64Cmd + epString);
             const nameStr = encodeURIComponent(foundItem.name || foundItem.title || 'Stream');
             
-            // Substitui o ID do IMDB pelo ID interno exato do addon!
+            // Substitui o ID pelo exato formato interno
             id = `xlv:${lIdx}_${listSig}:${sidStr}:${nameStr}`;
+            console.log(`[STREAMS] ID interno mapeado com sucesso.`);
             found = true;
             break; 
         }
