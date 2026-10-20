@@ -729,115 +729,136 @@ async getStreams(type, id, configBase64, host) {
     if (type === "series") await new Promise(resolve => setTimeout(resolve, 800));
 
     // ===== PONTE CINEMETA / IMDB -> IPTV =====
-if (!id.startsWith('xlv:')) {
-    console.log(`[STREAMS] Pedido IMDB detetado: ${id}`);
-    
-    let imdbId = id;
-    let season = null;
-    let episode = null;
-    
-    if (id.includes(':')) {
-        const parts = id.split(':');
-        imdbId = parts[0];
-        season = parts[1];
-        episode = parts[2];
-    }
-
-    const titleInfo = await getTitleByExternalId(imdbId);
-    if (!titleInfo || !titleInfo.name) return { streams: [] };
-    console.log(`[STREAMS] Nome no TMDB: "${titleInfo.name}" | T${season || '-'} E${episode || '-'}`);
-
-    // Prepara as palavras para a pesquisa inteligente
-    const normalize = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
-    const targetName = normalize(titleInfo.name);
-    // Ignora palavras pequenas como "the", "of", "and"
-    const searchWords = targetName.split(' ').filter(w => w.length > 2 && !['the', 'and', 'of', 'a'].includes(w));
-
-    const lists = this.parseConfig(configBase64);
-    let found = false;
-
-    for (let lIdx = 0; lIdx < lists.length; lIdx++) {
-        const config = lists[lIdx];
-        if (!config || config.type === 'm3u') continue;
-
-        const auth = await this.authenticate(config);
-        if (!auth) continue;
-
-        const apiBase = `${auth.api}sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
-        // Aumentámos o timeout para 15s porque o portal está lento
-        const opts = engine.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 15000 });
-        const sType = type === "movie" ? "vod" : "series";
-
-        let foundItem = null;
-        for (let page = 0; page < 3; page++) {
-            try {
-                const r = await axios.get(`${apiBase}&type=${sType}&action=get_ordered_list&p=${page}`, opts);
-                const data = r.data?.js?.data || r.data?.js || [];
-                const items = Array.isArray(data) ? data : Object.values(data);
-                
-                foundItem = items.find(item => {
-                    const itemName = normalize(item.name || item.title || '');
-                    
-                    // 1. Verifica se o nome do portal contém o nome do TMDB
-                    if (itemName.includes(targetName)) return true;
-                    
-                    // 2. Verifica se o nome do TMDB contém o nome do portal
-                    if (targetName.includes(itemName)) return true;
-                    
-                    // 3. Verifica se as palavras principais batem (ex: "dead" e "city")
-                    if (searchWords.length > 0 && searchWords.every(w => itemName.includes(w))) return true;
-                    
-                    return false;
-                });
-                if (foundItem) break;
-            } catch (e) { 
-                console.log(`[STREAMS] Erro na pesquisa página ${page}: ${e.message}`);
-            }
+    if (!id.startsWith('xlv:')) {
+        
+        // Anti-Spam (evita pedidos duplicados do Stremio que causam 403)
+        if (!global.pendingImdbSearch) global.pendingImdbSearch = {};
+        if (global.pendingImdbSearch[id]) {
+            try { return await global.pendingImdbSearch[id]; } catch(e) { return { streams: [] }; }
         }
 
-        if (foundItem) {
-            console.log(`[STREAMS] Encontrado no portal: ${foundItem.name || foundItem.title}`);
-            let base64Cmd = foundItem.cmd || foundItem.id;
-
-            if (type === 'series' && season) {
-                try {
-                    const sId = foundItem.id;
-                    const rFirst = await axios.get(`${apiBase}&type=series&action=get_ordered_list&movie_id=${sId}`, opts);
-                    const levels = rFirst.data?.js?.data || rFirst.data?.js || [];
-                    const seasonItem = levels.find(lvl => {
-                        const num = parseInt((lvl.name || "").match(/season\s*(\d+)|temporada\s*(\d+)|s(\d+)/i)?.[1] || (lvl.name || "").match(/\d+/)?.[0]);
-                        return num === parseInt(season) || (lvl.name || "").includes(season);
-                    });
-                    if (seasonItem) {
-                        base64Cmd = seasonItem.cmd || seasonItem.id;
-                    }
-                } catch(e) { }
-            }
-
-            if (typeof base64Cmd === 'object') {
-                base64Cmd = Buffer.from(JSON.stringify(base64Cmd)).toString('base64');
-            } else if (typeof base64Cmd === 'string' && base64Cmd.startsWith('{')) {
-                base64Cmd = Buffer.from(base64Cmd).toString('base64');
-            }
-
-            const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
-            const epString = (season && episode) ? `|||${episode}` : '';
-            const sidStr = encodeURIComponent(base64Cmd + epString);
-            const nameStr = encodeURIComponent(foundItem.name || foundItem.title || 'Stream');
+        const searchPromise = (async () => {
+            let imdbId = id;
+            let season = null;
+            let episode = null;
             
-            id = `xlv:${lIdx}_${listSig}:${sidStr}:${nameStr}`;
-            console.log(`[STREAMS] ID interno mapeado com sucesso.`);
-            found = true;
-            break; 
+            if (id.includes(':')) {
+                const parts = id.split(':');
+                imdbId = parts[0];
+                season = parts[1];
+                episode = parts[2];
+            }
+
+            const titleInfo = await getTitleByExternalId(imdbId);
+            if (!titleInfo || !titleInfo.name) return { streams: [] };
+            console.log(`[STREAMS] Nome no TMDB: "${titleInfo.name}" | T${season || '-'} E${episode || '-'}`);
+
+            const normalize = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
+            const targetName = normalize(titleInfo.name);
+            const searchWords = targetName.split(' ').filter(w => w.length > 2 && !['the', 'and', 'of', 'a'].includes(w));
+
+            const lists = this.parseConfig(configBase64);
+
+            for (let lIdx = 0; lIdx < lists.length; lIdx++) {
+                const config = lists[lIdx];
+                if (!config || config.type === 'm3u') continue;
+
+                const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
+                let foundItem = null;
+                let auth = await this.authenticate(config);
+                if (!auth) continue;
+
+                const apiBase = `${auth.api}sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+                const opts = engine.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 12000 });
+                const sType = type === "movie" ? "vod" : "series";
+
+                // 1. Verifica se o catálogo já está na memória (igual ao getCatalog)
+                const cachePrefix = `stalker_full_${config.url}_${type}_`;
+                let cacheKeys = Object.keys(catalogCache).filter(k => k.startsWith(cachePrefix));
+                
+                let searchInCache = () => {
+                    for (const ck of cacheKeys) {
+                        const cached = catalogCache[ck];
+                        if (!cached || !cached.data) continue;
+                        const item = cached.data.find(i => {
+                            const itemName = normalize(i.name || i.title || '');
+                            return itemName.includes(targetName) || targetName.includes(itemName) || (searchWords.length > 0 && searchWords.every(w => itemName.includes(w)));
+                        });
+                        if (item) return item;
+                    }
+                    return null;
+                };
+
+                foundItem = searchInCache();
+
+                // 2. Se não estiver na memória, faz o mesmo que o getCatalog (carrega 5 páginas)
+                if (!foundItem) {
+                    console.log(`[STREAMS] Não está no cache. A carregar páginas do portal ${config.url}...`);
+                    const fetchPage = async (p) => {
+                        try {
+                            const r = await axios.get(`${apiBase}&type=${sType}&action=get_ordered_list&p=${p}`, opts);
+                            const data = r.data?.js?.data || r.data?.js || [];
+                            return Array.isArray(data) ? data : Object.values(data);
+                        } catch(e) { return []; }
+                    };
+
+                    const [p1, p2, p3, p4, p5] = await Promise.all([fetchPage(1), fetchPage(2), fetchPage(3), fetchPage(4), fetchPage(5)]);
+                    const loadedData = [...p1, ...p2, ...p3, ...p4, ...p5];
+                    
+                    const fullKey = `stalker_full_${config.url}_${type}_all`;
+                    catalogCache[fullKey] = { data: loadedData, lastUpdate: Date.now(), complete: (p5.length === 0) };
+                    
+                    foundItem = loadedData.find(i => {
+                        const itemName = normalize(i.name || i.title || '');
+                        return itemName.includes(targetName) || targetName.includes(itemName) || (searchWords.length > 0 && searchWords.every(w => itemName.includes(w)));
+                    });
+                }
+
+                if (foundItem) {
+                    console.log(`[STREAMS] Encontrado: ${foundItem.name || foundItem.title}`);
+                    let base64Cmd = foundItem.cmd || foundItem.id;
+
+                    if (type === 'series' && season) {
+                        try {
+                            const sId = foundItem.id;
+                            const rFirst = await axios.get(`${apiBase}&type=series&action=get_ordered_list&movie_id=${sId}`, opts);
+                            const levels = rFirst.data?.js?.data || rFirst.data?.js || [];
+                            const seasonItem = levels.find(lvl => {
+                                const num = parseInt((lvl.name || "").match(/season\s*(\d+)|temporada\s*(\d+)|s(\d+)/i)?.[1] || (lvl.name || "").match(/\d+/)?.[0]);
+                                return num === parseInt(season) || (lvl.name || "").includes(season);
+                            });
+                            if (seasonItem) base64Cmd = seasonItem.cmd || seasonItem.id;
+                        } catch(e) { }
+                    }
+
+                    if (typeof base64Cmd === 'object') {
+                        base64Cmd = Buffer.from(JSON.stringify(base64Cmd)).toString('base64');
+                    } else if (typeof base64Cmd === 'string' && base64Cmd.startsWith('{')) {
+                        base64Cmd = Buffer.from(base64Cmd).toString('base64');
+                    }
+
+                    const epString = (season && episode) ? `|||${episode}` : '';
+                    const sidStr = encodeURIComponent(base64Cmd + epString);
+                    const nameStr = encodeURIComponent(foundItem.name || foundItem.title || 'Stream');
+                    
+                    const newId = `xlv:${lIdx}_${listSig}:${sidStr}:${nameStr}`;
+                    return await this.getStreams(type, newId, configBase64, host);
+                }
+            }
+
+            console.log(`[STREAMS] Não encontrado nos portais.`);
+            return { streams: [] };
+        })();
+
+        global.pendingImdbSearch[id] = searchPromise;
+        try {
+            return await searchPromise;
+        } finally {
+            delete global.pendingImdbSearch[id];
         }
     }
+    // ===== FIM DA PONTE =====
 
-    if (!found) {
-        console.log(`[STREAMS] Não encontrado no portal IPTV.`);
-        return { streams: [] };
-    }
-}
-// ===== FIM DA PONTE =====
     // --- CÓDIGO ORIGINAL PARA IDs INTERNOS (xlv:) ---
     const parts = id.split(":"); 
     const lIdxParts = parts[1].split("_");
@@ -970,7 +991,7 @@ if (!id.startsWith('xlv:')) {
         streams.push({ name: '🟢 ' + name, url: pUrl, title: proxyTitle, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
     }
     return { streams };
-  }       
+  }
 };
 
 module.exports = addon;
