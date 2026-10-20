@@ -706,70 +706,102 @@ async getStreams(type, id, configBase64, host) {
     if (type === "series") await new Promise(resolve => setTimeout(resolve, 800));
 
     // ===== PONTE CINEMETA / IMDB -> IPTV =====
-    if (id.startsWith('tt')) {
-        console.log(`[STREAMS] Pedido IMDB detetado: ${id}. A procurar no IPTV...`);
-        const idParts = id.split(':');
-        const imdbId = idParts[0];
-        const season = idParts[1];
-        const episode = idParts[2];
+if (id.startsWith('tt')) {
+    console.log(`[STREAMS] Pedido IMDB detetado: ${id}. A procurar no IPTV...`);
+    const idParts = id.split(':');
+    const imdbId = idParts[0];
+    const season = idParts[1];
+    const episode = idParts[2];
+    
+    const cleanName = await getTmdbNameFromImdb(imdbId, type);
+    if (!cleanName) return { streams: [] };
+    console.log(`[STREAMS] Nome encontrado no TMDB: "${cleanName}"`);
+
+    const lists = this.parseConfig(configBase64);
+    let searchStreams = [];
+
+    for (let lIdx = 0; lIdx < lists.length; lIdx++) {
+        const config = lists[lIdx];
+        if (!config) continue;
         
-        const cleanName = await getTmdbNameFromImdb(imdbId, type);
-        if (!cleanName) return { streams: [] };
-        console.log(`[STREAMS] Nome encontrado no TMDB: "${cleanName}"`);
-
-        const lists = this.parseConfig(configBase64);
-        let searchStreams = [];
-
-        for (let lIdx = 0; lIdx < lists.length; lIdx++) {
-            const config = lists[lIdx];
-            const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
-            
-            // Procura no cache do IPTV por este nome
-            const prefix = `stalker_full_${config.url}_${type}_`;
-            const cacheKeys = Object.keys(catalogCache).filter(k => k.startsWith(prefix));
-            
-            for (const ck of cacheKeys) {
-                const cached = catalogCache[ck];
-                if (!cached || !cached.data) continue;
-                
-                for (const item of cached.data) {
-                    const itemName = item.name || item.title || '';
-                    // Verifica se o nome do item do IPTV bate com o nome do TMDB
-                    if (itemName.toLowerCase().includes(cleanName.toLowerCase()) || cleanName.toLowerCase().includes(itemName.toLowerCase())) {
-                        
-                        const realCmd = item.cmd || item.id;
-                        const sId = encodeURIComponent(realCmd + (season ? `|||${episode}` : ''));
-                        
-                        // Adiciona Link Directo (TV)
-                        searchStreams.push({
-                            name: '🟢 ' + (config.name || 'IPTV'),
-                            url: `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(realCmd)}?type=${type}`,
-                            title: `⚡ Directo TV`,
-                            behaviorHints: { notWebReady: true },
-                            contentType: 'video/mp2t'
-                        });
-
-                        // Adiciona Link Proxy (Fallback)
-                        searchStreams.push({
-                            name: '🟢 ' + (config.name || 'IPTV'),
-                            url: `https://${host}/proxy/${encodeURIComponent(configBase64)}/${lIdx}/${sId}?type=${type}`,
-                            title: `🔄 Proxy Estável`,
-                            behaviorHints: { notWebReady: true },
-                            contentType: 'video/mp2t'
-                        });
-                        
-                        break; // Se encontrou num servidor, avança para o próximo
-                    }
+        const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
+        const prefix = `stalker_full_${config.url}_${type}_`;
+        const cacheKeys = Object.keys(catalogCache).filter(k => k.startsWith(prefix));
+        
+        let foundItem = null;
+        for (const ck of cacheKeys) {
+            const cached = catalogCache[ck];
+            if (!cached || !cached.data) continue;
+            for (const item of cached.data) {
+                const itemName = item.name || item.title || '';
+                if (itemName.toLowerCase().includes(cleanName.toLowerCase()) || cleanName.toLowerCase().includes(itemName.toLowerCase())) {
+                    foundItem = item;
+                    break;
                 }
             }
+            if (foundItem) break;
         }
-        
-        console.log(`[STREAMS] Encontrados ${searchStreams.length} links nos servidores para "${cleanName}"`);
-        return { streams: searchStreams };
-    }
-    // ===== FIM DA PONTE =====
 
-    // --- CÓDIGO ORIGINAL (A PARTIR DAQUI) ---
+        if (foundItem) {
+            console.log(`[STREAMS] Encontrado no IPTV: ${foundItem.name || foundItem.title}`);
+            try {
+                const auth = await engine.authenticate(config, config.proxy);
+                if (auth) {
+                    const realCmd = foundItem.cmd || foundItem.id;
+                    let sNum = (season && episode) ? episode : null;
+                    
+                    // Obter o link final (igual ao getStreams normal)
+                    let cmdUrl = null;
+                    try {
+                        cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
+                    } catch(e) { console.error(`[STREAM ERROR] createStreamLink falhou:`, e.message); }
+
+                    if (cmdUrl) {
+                        let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
+                        if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
+                            cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
+                        }
+
+                        const titleStr = type === 'movie' ? '🎬 Directo Filme' : `🍿 Directo Série - ${cleanName}`;
+
+                        // Respeita a configuração do utilizador (Directo)
+                        if (config?.useDirect !== false) {
+                            const finalUrl = (type === 'tv')
+                                ? `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(realCmd)}?type=${type}`
+                                : cleanUrl;
+                            
+                            searchStreams.push({
+                                name: '🟢 ' + (config.name || 'IPTV'),
+                                url: finalUrl,
+                                title: titleStr,
+                                behaviorHints: { notWebReady: type === 'tv' },
+                                contentType: type === 'tv' ? 'video/mp2t' : undefined
+                            });
+                        }
+
+                        // Respeita a configuração do utilizador (Proxy)
+                        if (config?.useProxy !== false) {
+                            const pUrl = `https://${host}/proxy/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(realCmd + (sNum ? '|||'+sNum : ''))}?type=${type}`;
+                            searchStreams.push({
+                                name: '🟢 ' + (config.name || 'IPTV'),
+                                url: pUrl,
+                                title: `🔄 Proxy Estável`,
+                                behaviorHints: { notWebReady: type === 'tv' },
+                                contentType: type === 'tv' ? 'video/mp2t' : undefined
+                            });
+                        }
+                    }
+                }
+            } catch(e) {
+                console.error(`[STREAMS] Erro na ponte IMDB para ${config.url}:`, e.message);
+            }
+        }
+    }
+
+    console.log(`[STREAMS] Ponte IMDB devolveu ${searchStreams.length} links.`);
+    return { streams: searchStreams };
+}
+// ===== FIM DA PONTE =====
     const parts = id.split(":"); 
     const lIdxParts = parts[1].split("_");
     const lIdx = parseInt(lIdxParts[0]);
