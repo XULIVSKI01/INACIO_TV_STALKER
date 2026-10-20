@@ -1,4 +1,4 @@
-GL// 1° Repositorio addon.cjs – universal e estável
+// 1° Repositorio addon.cjs – universal e estável
 const axios = require("axios");
 const crypto = require("crypto");
 const https = require('https'); 
