@@ -729,100 +729,78 @@ async getStreams(type, id, configBase64, host) {
     if (type === "series") await new Promise(resolve => setTimeout(resolve, 800));
 
     // ===== PONTE CINEMETA / IMDB -> IPTV =====
-    if (!id.startsWith('xlv:')) {
-        console.log(`[STREAMS] Pedido IMDB detetado: ${id}`);
-        
-        let imdbId = id;
-        let season = null;
-        let episode = null;
-        
-        // Extrai temporada e episódio do ID do Stremio (ex: tt1234567:1:2)
-        if (id.includes(':')) {
-            const parts = id.split(':');
-            imdbId = parts[0];
-            season = parts[1];
-            episode = parts[2];
-        }
-
-        const titleInfo = await getTitleByExternalId(imdbId);
-        if (!titleInfo || !titleInfo.name) return { streams: [] };
-        console.log(`[STREAMS] Nome no TMDB: "${titleInfo.name}" | T${season || '-'} E${episode || '-'}`);
-
-        const lists = this.parseConfig(configBase64);
-        let searchStreams = [];
-
-        // Percorre todas as listas configuradas
-        for (let lIdx = 0; lIdx < lists.length; lIdx++) {
-            const config = lists[lIdx];
-            if (!config || config.type === 'm3u') continue;
-
-            const auth = await this.authenticate(config);
-            if (!auth) continue;
-
-            const apiBase = `${auth.api}sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
-            const opts = engine.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 10000 });
-            const sType = type === "movie" ? "vod" : "series";
-
-            // Pesquisa em tempo real no portal (sem depender de cache)
-            let foundItem = null;
-            for (let page = 0; page < 3; page++) {
-                try {
-                    const r = await axios.get(`${apiBase}&type=${sType}&action=get_ordered_list&p=${page}`, opts);
-                    const data = r.data?.js?.data || r.data?.js || [];
-                    const items = Array.isArray(data) ? data : Object.values(data);
-                    const normalize = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, '');
-                    const targetName = normalize(titleInfo.name);
-                    
-                    foundItem = items.find(item => {
-                        const name = normalize(item.name || item.title || '');
-                        return name.includes(targetName);
-                    });
-                    if (foundItem) break;
-                } catch (e) { }
-            }
-
-            if (foundItem) {
-                console.log(`[STREAMS] Encontrado no portal: ${foundItem.name || foundItem.title}`);
-                try {
-                    const realCmd = foundItem.cmd || foundItem.id;
-                    const sNum = (season && episode) ? episode : null;
-                    
-                    // Obtém o link do episódio específico
-                    let cmdUrl = await engine.createStreamLink(auth, config, String(realCmd), type, sNum);
-
-                    if (cmdUrl) {
-                        let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
-                        if (!cleanUrl.startsWith('http')) {
-                            const basePortal = config.url.split('/c/')[0];
-                            cleanUrl = basePortal + (cleanUrl.startsWith('/') ? '' : '/') + cleanUrl;
-                        }
-
-                        // Previne que apareça a página principal do portal no ecrã
-                        if (cleanUrl.includes('.com:80/c') || cleanUrl.endsWith('/c/')) {
-                            console.log(`[STREAMS] Link inválido (página do portal): ${cleanUrl}`);
-                        } else {
-                            const streamTitle = type === 'movie' ? '🎬 Directo Filme' : `🍿 Directo Série - S${season}E${episode}`;
-                            
-                            if (config?.useDirect !== false) {
-                                searchStreams.push({
-                                    name: '🟢 ' + (config.name || 'IPTV'),
-                                    url: cleanUrl, // Envia o link real direto para a TV
-                                    title: streamTitle,
-                                    behaviorHints: { notWebReady: true },
-                                    contentType: 'video/mp2t'
-                                });
-                                console.log(`[STREAMS] Link Directo adicionado: ${cleanUrl.substring(0, 50)}...`);
-                            }
-                        }
-                    }
-                } catch(e) {
-                    console.error(`[STREAMS] Erro ao gerar link:`, e.message);
-                }
-            }
-        }
-        return { streams: searchStreams };
+if (!id.startsWith('xlv:')) {
+    console.log(`[STREAMS] Pedido IMDB detetado: ${id}`);
+    
+    let imdbId = id;
+    let season = null;
+    let episode = null;
+    
+    if (id.includes(':')) {
+        const parts = id.split(':');
+        imdbId = parts[0];
+        season = parts[1];
+        episode = parts[2];
     }
-    // ===== FIM DA PONTE =====
+
+    const titleInfo = await getTitleByExternalId(imdbId);
+    if (!titleInfo || !titleInfo.name) return { streams: [] };
+    console.log(`[STREAMS] Nome no TMDB: "${titleInfo.name}" | T${season || '-'} E${episode || '-'}`);
+
+    const lists = this.parseConfig(configBase64);
+    let found = false;
+
+    for (let lIdx = 0; lIdx < lists.length; lIdx++) {
+        const config = lists[lIdx];
+        if (!config || config.type === 'm3u') continue;
+
+        const auth = await this.authenticate(config);
+        if (!auth) continue;
+
+        const apiBase = `${auth.api}sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+        const opts = engine.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 10000 });
+        const sType = type === "movie" ? "vod" : "series";
+
+        let foundItem = null;
+        for (let page = 0; page < 3; page++) {
+            try {
+                const r = await axios.get(`${apiBase}&type=${sType}&action=get_ordered_list&p=${page}`, opts);
+                const data = r.data?.js?.data || r.data?.js || [];
+                const items = Array.isArray(data) ? data : Object.values(data);
+                const normalize = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, '');
+                const targetName = normalize(titleInfo.name);
+                
+                foundItem = items.find(item => {
+                    const name = normalize(item.name || item.title || '');
+                    return name.includes(targetName);
+                });
+                if (foundItem) break;
+            } catch (e) { }
+        }
+
+        if (foundItem) {
+            console.log(`[STREAMS] Encontrado no portal: ${foundItem.name || foundItem.title}`);
+            const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
+            const targetId = foundItem.cmd || foundItem.id;
+            
+            // Reconstrói o ID interno exatamente como o addon nativo faz
+            const epString = (season && episode) ? `|||${episode}` : '';
+            const nameStr = encodeURIComponent(foundItem.name || foundItem.title || 'Stream');
+            const sidStr = encodeURIComponent(String(targetId) + epString);
+            
+            // Substitui o ID do IMDB pelo ID interno do addon
+            id = `xlv:${lIdx}_${listSig}:${sidStr}:${nameStr}`;
+            found = true;
+            break; 
+        }
+    }
+
+    if (!found) {
+        console.log(`[STREAMS] Não encontrado no portal IPTV.`);
+        return { streams: [] };
+    }
+}
+// ===== FIM DA PONTE =====
 
     // --- CÓDIGO ORIGINAL PARA IDs INTERNOS (xlv:) ---
     const parts = id.split(":"); 
