@@ -748,6 +748,7 @@ if (!id.startsWith('xlv:')) {
     console.log(`[STREAMS] Nome no TMDB: "${titleInfo.name}" | T${season || '-'} E${episode || '-'}`);
 
     const lists = this.parseConfig(configBase64);
+    let found = false;
 
     for (let lIdx = 0; lIdx < lists.length; lIdx++) {
         const config = lists[lIdx];
@@ -779,58 +780,31 @@ if (!id.startsWith('xlv:')) {
 
         if (foundItem) {
             console.log(`[STREAMS] Encontrado no portal: ${foundItem.name || foundItem.title}`);
-            try {
-                let realCmd = foundItem.cmd || foundItem.id;
-                
-                // ✅ AQUI ESTÁ A CORREÇÃO: Converter para Base64 (igual ao addon nativo)
-                if (typeof realCmd === 'object') {
-                    realCmd = Buffer.from(JSON.stringify(realCmd)).toString('base64');
-                } else if (!realCmd.startsWith('eyJ')) {
-                    // Se for uma string JSON, também converte para Base64
-                    try {
-                        JSON.parse(realCmd);
-                        realCmd = Buffer.from(realCmd).toString('base64');
-                    } catch(e) { /* Se não for JSON, deixa como está */ }
-                }
-
-                const sNum = (season && episode) ? episode : null;
-                
-                // Gera o link final
-                let cmdUrl = await engine.createStreamLink(auth, config, String(realCmd), type, sNum);
-
-                if (cmdUrl) {
-                    let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
-                    if (!cleanUrl.startsWith('http')) {
-                        const basePortal = config.url.split('/c/')[0];
-                        cleanUrl = basePortal + (cleanUrl.startsWith('/') ? '' : '/') + cleanUrl;
-                    }
-
-                    if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
-                        cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
-                    }
-
-                    if (cleanUrl.includes('.com:80/c') || cleanUrl.endsWith('/c/')) {
-                        console.log(`[STREAMS] Link inválido gerado.`);
-                    } else {
-                        const streamTitle = type === 'movie' ? '🎬 Directo Filme' : `🍿 Directo Série - S${season}E${episode}`;
-                        
-                        if (config?.useDirect !== false) {
-                            return { streams: [{
-                                name: '🟢 ' + (config.name || 'IPTV'),
-                                url: cleanUrl, 
-                                title: streamTitle,
-                                behaviorHints: { notWebReady: true },
-                                contentType: 'video/mp2t'
-                            }] };
-                        }
-                    }
-                }
-            } catch(e) {
-                console.error(`[STREAMS] Erro ao gerar link:`, e.message);
+            
+            let cmdStr = foundItem.cmd || foundItem.id;
+            if (typeof cmdStr === 'object') {
+                cmdStr = JSON.stringify(cmdStr);
             }
+            
+            // O SEGREDO ESTÁ AQUI: Converte o comando para Base64 (tal como o addon nativo)
+            const base64Cmd = Buffer.from(cmdStr).toString('base64');
+            
+            const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
+            const epString = (season && episode) ? `|||${episode}` : '';
+            const sidStr = encodeURIComponent(base64Cmd + epString);
+            const nameStr = encodeURIComponent(foundItem.name || foundItem.title || 'Stream');
+            
+            // Substitui o ID do IMDB pelo ID interno exato do addon!
+            id = `xlv:${lIdx}_${listSig}:${sidStr}:${nameStr}`;
+            found = true;
+            break; 
         }
     }
-    return { streams: [] };
+
+    if (!found) {
+        console.log(`[STREAMS] Não encontrado no portal IPTV.`);
+        return { streams: [] };
+    }
 }
 // ===== FIM DA PONTE =====
     // --- CÓDIGO ORIGINAL PARA IDs INTERNOS (xlv:) ---
