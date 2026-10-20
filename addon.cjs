@@ -706,102 +706,101 @@ async getStreams(type, id, configBase64, host) {
     if (type === "series") await new Promise(resolve => setTimeout(resolve, 800));
 
     // ===== PONTE CINEMETA / IMDB -> IPTV =====
-if (id.startsWith('tt')) {
-    console.log(`[STREAMS] Pedido IMDB detetado: ${id}. A procurar no IPTV...`);
-    const idParts = id.split(':');
-    const imdbId = idParts[0];
-    const season = idParts[1];
-    const episode = idParts[2];
-    
-    const cleanName = await getTmdbNameFromImdb(imdbId, type);
-    if (!cleanName) return { streams: [] };
-    console.log(`[STREAMS] Nome encontrado no TMDB: "${cleanName}"`);
-
-    const lists = this.parseConfig(configBase64);
-    let searchStreams = [];
-
-    for (let lIdx = 0; lIdx < lists.length; lIdx++) {
-        const config = lists[lIdx];
-        if (!config) continue;
+    if (id.startsWith('tt')) {
+        console.log(`[STREAMS] Pedido IMDB detetado: ${id}. A procurar no IPTV...`);
+        const idParts = id.split(':');
+        const imdbId = idParts[0];
+        const season = idParts[1];
+        const episode = idParts[2];
         
-        const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
-        const prefix = `stalker_full_${config.url}_${type}_`;
-        const cacheKeys = Object.keys(catalogCache).filter(k => k.startsWith(prefix));
-        
-        let foundItem = null;
-        for (const ck of cacheKeys) {
-            const cached = catalogCache[ck];
-            if (!cached || !cached.data) continue;
-            for (const item of cached.data) {
-                const itemName = item.name || item.title || '';
-                if (itemName.toLowerCase().includes(cleanName.toLowerCase()) || cleanName.toLowerCase().includes(itemName.toLowerCase())) {
-                    foundItem = item;
-                    break;
-                }
-            }
-            if (foundItem) break;
-        }
+        const cleanName = await getTmdbNameFromImdb(imdbId, type);
+        if (!cleanName) return { streams: [] };
+        console.log(`[STREAMS] Nome encontrado no TMDB: "${cleanName}"`);
 
-        if (foundItem) {
-            console.log(`[STREAMS] Encontrado no IPTV: ${foundItem.name || foundItem.title}`);
-            try {
-                const auth = await engine.authenticate(config, config.proxy);
-                if (auth) {
-                    const realCmd = foundItem.cmd || foundItem.id;
-                    let sNum = (season && episode) ? episode : null;
-                    
-                    // Obter o link final (igual ao getStreams normal)
-                    let cmdUrl = null;
-                    try {
-                        cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
-                    } catch(e) { console.error(`[STREAM ERROR] createStreamLink falhou:`, e.message); }
+        const lists = this.parseConfig(configBase64);
+        let searchStreams = [];
 
-                    if (cmdUrl) {
-                        let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
-                        if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
-                            cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
-                        }
-
-                        const titleStr = type === 'movie' ? '🎬 Directo Filme' : `🍿 Directo Série - ${cleanName}`;
-
-                        // Respeita a configuração do utilizador (Directo)
-                        if (config?.useDirect !== false) {
-                            const finalUrl = (type === 'tv')
-                                ? `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(realCmd)}?type=${type}`
-                                : cleanUrl;
-                            
-                            searchStreams.push({
-                                name: '🟢 ' + (config.name || 'IPTV'),
-                                url: finalUrl,
-                                title: titleStr,
-                                behaviorHints: { notWebReady: type === 'tv' },
-                                contentType: type === 'tv' ? 'video/mp2t' : undefined
-                            });
-                        }
-
-                        // Respeita a configuração do utilizador (Proxy)
-                        if (config?.useProxy !== false) {
-                            const pUrl = `https://${host}/proxy/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(realCmd + (sNum ? '|||'+sNum : ''))}?type=${type}`;
-                            searchStreams.push({
-                                name: '🟢 ' + (config.name || 'IPTV'),
-                                url: pUrl,
-                                title: `🔄 Proxy Estável`,
-                                behaviorHints: { notWebReady: type === 'tv' },
-                                contentType: type === 'tv' ? 'video/mp2t' : undefined
-                            });
-                        }
+        for (let lIdx = 0; lIdx < lists.length; lIdx++) {
+            const config = lists[lIdx];
+            if (!config) continue;
+            
+            const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
+            const prefix = `stalker_full_${config.url}_${type}_`;
+            const cacheKeys = Object.keys(catalogCache).filter(k => k.startsWith(prefix));
+            
+            let foundItem = null;
+            for (const ck of cacheKeys) {
+                const cached = catalogCache[ck];
+                if (!cached || !cached.data) continue;
+                for (const item of cached.data) {
+                    const itemName = item.name || item.title || '';
+                    if (itemName.toLowerCase().includes(cleanName.toLowerCase()) || cleanName.toLowerCase().includes(itemName.toLowerCase())) {
+                        foundItem = item;
+                        break;
                     }
                 }
-            } catch(e) {
-                console.error(`[STREAMS] Erro na ponte IMDB para ${config.url}:`, e.message);
+                if (foundItem) break;
+            }
+
+            if (foundItem) {
+                console.log(`[STREAMS] Encontrado no IPTV: ${foundItem.name || foundItem.title}`);
+                try {
+                    const auth = await engine.authenticate(config, config.proxy);
+                    if (auth) {
+                        const realCmd = foundItem.cmd || foundItem.id;
+                        let sNum = (season && episode) ? episode : null;
+                        
+                        let cmdUrl = null;
+                        try {
+                            cmdUrl = await engine.createStreamLink(auth, config, realCmd, type, sNum);
+                        } catch(e) { console.error(`[STREAM ERROR] createStreamLink falhou:`, e.message); }
+
+                        if (cmdUrl) {
+                            let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
+                            if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
+                                cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
+                            }
+
+                            const titleStr = type === 'movie' ? '🎬 Directo Filme' : `🍿 Directo Série - ${cleanName}`;
+
+                            if (config?.useDirect !== false) {
+                                const finalUrl = (type === 'tv')
+                                    ? `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(realCmd)}?type=${type}`
+                                    : cleanUrl;
+                                
+                                searchStreams.push({
+                                    name: '🟢 ' + (config.name || 'IPTV'),
+                                    url: finalUrl,
+                                    title: titleStr,
+                                    behaviorHints: { notWebReady: type === 'tv' },
+                                    contentType: type === 'tv' ? 'video/mp2t' : undefined
+                                });
+                            }
+
+                            if (config?.useProxy !== false) {
+                                const pUrl = `https://${host}/proxy/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(realCmd + (sNum ? '|||'+sNum : ''))}?type=${type}`;
+                                searchStreams.push({
+                                    name: '🟢 ' + (config.name || 'IPTV'),
+                                    url: pUrl,
+                                    title: `🔄 Proxy Estável`,
+                                    behaviorHints: { notWebReady: type === 'tv' },
+                                    contentType: type === 'tv' ? 'video/mp2t' : undefined
+                                });
+                            }
+                        }
+                    }
+                } catch(e) {
+                    console.error(`[STREAMS] Erro na ponte IMDB para ${config.url}:`, e.message);
+                }
             }
         }
-    }
 
-    console.log(`[STREAMS] Ponte IMDB devolveu ${searchStreams.length} links.`);
-    return { streams: searchStreams };
-}
-// ===== FIM DA PONTE =====
+        console.log(`[STREAMS] Ponte IMDB devolveu ${searchStreams.length} links.`);
+        return { streams: searchStreams };
+    }
+    // ===== FIM DA PONTE =====
+
+    // --- CÓDIGO ORIGINAL (A PARTIR DAQUI) ---
     const parts = id.split(":"); 
     const lIdxParts = parts[1].split("_");
     const lIdx = parseInt(lIdxParts[0]);
@@ -856,20 +855,14 @@ if (id.startsWith('tt')) {
 
                 if (!global.pendingLinkRequests) global.pendingLinkRequests = {};
 
-                // 1) Cache curta (5s)
                 const cachedLink = global.streamLinkCache && global.streamLinkCache[linkCacheKey];
                 if (cachedLink && Date.now() - cachedLink.ts < 5000) {
                     cmdUrl = cachedLink.url;
-                    console.log(`[LINK CACHE] Reutilizado para ${realCmd} (${Math.round((Date.now()-cachedLink.ts))}ms)`);
+                    console.log(`[LINK CACHE] Reutilizado para ${realCmd}`);
                 }
-                // 2) Aguarda pedido em curso
                 else if (global.pendingLinkRequests[linkCacheKey]) {
-                    console.log(`[LINK PENDING] A aguardar pedido em curso para ${realCmd}`);
-                    try {
-                        cmdUrl = await global.pendingLinkRequests[linkCacheKey];
-                    } catch(e) { cmdUrl = null; }
+                    try { cmdUrl = await global.pendingLinkRequests[linkCacheKey]; } catch(e) { cmdUrl = null; }
                 }
-                // 3) Cria agora
                 else {
                     const DIRECT_URL_SERVERS = ['geral.cc', 'vpn.connectra1', 'painelbest', 'b1.jinbox', 'vip.rxs1'];
                     const cleanCmd = realCmd.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "").trim();
@@ -881,34 +874,25 @@ if (id.startsWith('tt')) {
                         cmdUrl = cleanCmd;
                         if (!global.streamLinkCache) global.streamLinkCache = {};
                         global.streamLinkCache[linkCacheKey] = { url: cmdUrl, ts: Date.now() };
-                        console.log(`[LINK] URL direta detectada, sem create_link`);
                     } else {
-                        console.log(`[LINK] A criar link para ${realCmd}...`);
                         const promise = (async () => {
                             let url = await engine.createStreamLink(auth, config, realCmd, type, sNum);
                             if (!url || url.trim() === "") {
-                                console.log(`[LINK] 1ª tentativa falhou. Forçando novo token...`);
                                 const newAuth = await engine.authenticate(config, config.proxy);
                                 if (newAuth) url = await engine.createStreamLink(newAuth, config, realCmd, type, sNum);
                             }
                             return url;
                         })();
                         global.pendingLinkRequests[linkCacheKey] = promise;
-                        try {
-                            cmdUrl = await promise;
-                        } finally {
-                            delete global.pendingLinkRequests[linkCacheKey];
-                        }
+                        try { cmdUrl = await promise; } finally { delete global.pendingLinkRequests[linkCacheKey]; }
                         if (cmdUrl && typeof cmdUrl === 'string' && cmdUrl.trim() !== '') {
                             if (!global.streamLinkCache) global.streamLinkCache = {};
                             global.streamLinkCache[linkCacheKey] = { url: cmdUrl, ts: Date.now() };
-                            console.log(`[LINK] ✅ Link obtido para ${realCmd}`);
                         }
                     }
                 }
 
                 if (typeof cmdUrl === 'string' && cmdUrl.trim() !== "") {
-                    console.log(`[STREAMS] URL obtido: ${cmdUrl}`);
                     let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
                     if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
                         cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
@@ -924,8 +908,6 @@ if (id.startsWith('tt')) {
                             directAdded = true;
                         }
                     }
-                } else {
-                    console.warn(`[STREAMS WARNING] Nenhuma tentativa devolveu link válido para ${id}`);
                 }
             }
         } catch(e) { 
@@ -951,7 +933,7 @@ if (id.startsWith('tt')) {
         streams.push({ name: '🟢 ' + name, url: pUrl, title: proxyTitle, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
     }
     return { streams };
-  }
+}
 };
 
 module.exports = addon;
