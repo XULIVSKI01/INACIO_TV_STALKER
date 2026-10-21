@@ -737,10 +737,12 @@ async getStreams(type, id, configBase64, host) {
     console.log(`[STREAMS] Pedido de stream: type=${type}, id=${id}`);
     if (type === "series") await new Promise(resolve => setTimeout(resolve, 800));
 
-    // ===== PONTE CINEMETA / IMDB -> IPTV (PARALELO) =====
+    // ===== PONTE CINEMETA / IMDB -> IPTV =====
 if (!id.startsWith('xlv:')) {
     
     if (!global.pendingImdbSearch) global.pendingImdbSearch = {};
+    if (!global.blockedPortals) global.blockedPortals = {};
+
     if (global.pendingImdbSearch[id]) {
         try { return await global.pendingImdbSearch[id]; } catch(e) { return { streams: [] }; }
     }
@@ -761,129 +763,115 @@ if (!id.startsWith('xlv:')) {
         const searchWords = targetName.split(' ').filter(w => w.length > 2 && !['the', 'and', 'of', 'a'].includes(w));
 
         const lists = this.parseConfig(configBase64);
+        
+        // Filtra APENAS os portais Stalker (ignora M3U e Xtream para esta pesquisa)
+        const stalkerLists = lists.filter(c => c && (c.type === 'stalker' || !c.type)).map((c, i) => ({ config: c, lIdx: lists.indexOf(c) }));
 
-        // Função que procura num único servidor
-        const searchOnPortal = async (config, lIdx) => {
-    // Log imediato para vermos que este servidor está a ser testado
-    console.log(`[STREAMS] 🔍 A testar portal: ${config.url}`);
-    
-    if (global.blockedPortals[config.url] && global.blockedPortals[config.url] > Date.now()) {
-        throw new Error('Bloqueado (403 recente)');
-    }
-
-    // Auth com limite de tempo de 3s
-    const auth = await Promise.race([
-        this.authenticate(config),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout Auth')), 3000))
-    ]);
-    if (!auth) throw new Error('Falha na autenticação');
-
-    const apiBase = `${auth.api}sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
-    const opts = engine.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 5000 });
-    const sType = type === "movie" ? "vod" : "series";
-    const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
-
-    // 1. Verifica cache
-    const cachePrefix = `stalker_full_${config.url}_${type}_`;
-    let cacheKeys = Object.keys(catalogCache).filter(k => k.startsWith(cachePrefix));
-    for (const ck of cacheKeys) {
-        const cached = catalogCache[ck];
-        if (!cached || !cached.data) continue;
-        const item = cached.data.find(i => {
-            const itemName = normalize(i.name || i.title || '');
-            return itemName.includes(targetName) || targetName.includes(itemName) || (searchWords.length > 0 && searchWords.every(w => itemName.includes(w)));
-        });
-        if (item) return { config, lIdx, listSig, foundItem: item, auth, apiBase, opts };
-    }
-
-    // 2. Vai ao portal (Páginas 1 a 5)
-    for (let p = 1; p <= 5; p++) {
-        try {
-            const r = await axios.get(`${apiBase}&type=${sType}&action=get_ordered_list&p=${p}`, opts);
-            const data = r.data?.js?.data || r.data?.js || [];
-            const items = Array.isArray(data) ? data : Object.values(data);
+        const searchOnPortal = async (portalInfo) => {
+            const { config, lIdx } = portalInfo;
+            console.log(`[STREAMS] 🔍 A testar portal: ${config.url}`);
             
-            if (items.length === 0) break; 
-
-            const foundItem = items.find(i => {
-                const itemName = normalize(i.name || i.title || '');
-                return itemName.includes(targetName) || targetName.includes(itemName) || (searchWords.length > 0 && searchWords.every(w => itemName.includes(w)));
-            });
-
-            if (foundItem) return { config, lIdx, listSig, foundItem, auth, apiBase, opts };
-
-            await new Promise(resolve => setTimeout(resolve, 50));
-        } catch (e) {
-            if (e.response && (e.response.status === 403 || e.response.status === 429)) {
-                global.blockedPortals[config.url] = Date.now() + 5 * 60 * 1000;
-                throw new Error('Portal bloqueou');
+            if (global.blockedPortals[config.url] && global.blockedPortals[config.url] > Date.now()) {
+                throw new Error('Bloqueado (403 recente)');
             }
-        }
-    }
-    throw new Error('Não encontrado');
-};
 
-// Dispara a procura em TODOS os portais ao mesmo tempo
-const portalPromises = lists.map((config, lIdx) => {
-    if (!config || config.type === 'm3u') return Promise.reject(new Error('Skip'));
-    return searchOnPortal(config, lIdx);
-});
+            const auth = await Promise.race([
+                this.authenticate(config),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout Auth')), 3500))
+            ]);
+            if (!auth) throw new Error('Falha na autenticação');
 
-try {
-    // Aqui usamos o timeout global de 7s, mas garantimos que espera pelos resultados
-    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout Global')), 7000));
-    
-    // O Promise.any devolve o primeiro que TIVER SUCESSO
-    const result = await Promise.race([
-        Promise.any(portalPromises),
-        timeoutPromise
-    ]);
-    
-    console.log(`[STREAMS] ✅ Encontrado no portal ${result.config.url}: ${result.foundItem.name || result.foundItem.title}`);
-    
-    let base64Cmd = result.foundItem.cmd || result.foundItem.id;
+            const apiBase = `${auth.api}sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+            const opts = engine.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 5000 });
+            const sType = type === "movie" ? "vod" : "series";
+            const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
 
-    if (type === 'series' && season) {
+            // Verifica cache
+            const cachePrefix = `stalker_full_${config.url}_${type}_`;
+            let cacheKeys = Object.keys(catalogCache).filter(k => k.startsWith(cachePrefix));
+            for (const ck of cacheKeys) {
+                const cached = catalogCache[ck];
+                if (!cached || !cached.data) continue;
+                const item = cached.data.find(i => {
+                    const itemName = normalize(i.name || i.title || '');
+                    return itemName.includes(targetName) || targetName.includes(itemName) || (searchWords.length > 0 && searchWords.every(w => itemName.includes(w)));
+                });
+                if (item) return { config, lIdx, listSig, foundItem: item, auth, apiBase, opts };
+            }
+
+            // Pesquisa no portal
+            for (let p = 1; p <= 5; p++) {
+                try {
+                    const r = await axios.get(`${apiBase}&type=${sType}&action=get_ordered_list&p=${p}`, opts);
+                    const data = r.data?.js?.data || r.data?.js || [];
+                    const items = Array.isArray(data) ? data : Object.values(data);
+                    
+                    if (items.length === 0) break; 
+
+                    const foundItem = items.find(i => {
+                        const itemName = normalize(i.name || i.title || '');
+                        return itemName.includes(targetName) || targetName.includes(itemName) || (searchWords.length > 0 && searchWords.every(w => itemName.includes(w)));
+                    });
+
+                    if (foundItem) return { config, lIdx, listSig, foundItem, auth, apiBase, opts };
+
+                    await new Promise(resolve => setTimeout(resolve, 50));
+                } catch (e) {
+                    if (e.response && (e.response.status === 403 || e.response.status === 429)) {
+                        global.blockedPortals[config.url] = Date.now() + 5 * 60 * 1000;
+                        throw new Error('Portal bloqueou (403)');
+                    }
+                }
+            }
+            throw new Error('Não encontrado nas primeiras 5 páginas');
+        };
+
         try {
-            const sId = result.foundItem.id;
-            const rFirst = await axios.get(`${result.apiBase}&type=series&action=get_ordered_list&movie_id=${sId}`, result.opts);
-            const levels = rFirst.data?.js?.data || rFirst.data?.js || [];
-            const seasonItem = levels.find(lvl => {
-                const num = parseInt((lvl.name || "").match(/season\s*(\d+)|temporada\s*(\d+)|s(\d+)/i)?.[1] || (lvl.name || "").match(/\d+/)?.[0]);
-                return num === parseInt(season) || (lvl.name || "").includes(season);
-            });
-            if (seasonItem) base64Cmd = seasonItem.cmd || seasonItem.id;
-        } catch(e) { }
-    }
+            // Dispara a procura em todos os portais em paralelo
+            const portalPromises = stalkerLists.map(info => searchOnPortal(info));
+            
+            // Limite de tempo global de 7 segundos
+            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout Global')), 7000));
+            
+            const result = await Promise.race([
+                Promise.any(portalPromises),
+                timeoutPromise
+            ]);
+            
+            console.log(`[STREAMS] ✅ Encontrado no portal ${result.config.url}: ${result.foundItem.name || result.foundItem.title}`);
+            
+            let base64Cmd = result.foundItem.cmd || result.foundItem.id;
 
-    if (typeof base64Cmd === 'object') {
-        base64Cmd = Buffer.from(JSON.stringify(base64Cmd)).toString('base64');
-    } else if (typeof base64Cmd === 'string' && base64Cmd.startsWith('{')) {
-        base64Cmd = Buffer.from(base64Cmd).toString('base64');
-    }
+            if (type === 'series' && season) {
+                try {
+                    const sId = result.foundItem.id;
+                    const rFirst = await axios.get(`${result.apiBase}&type=series&action=get_ordered_list&movie_id=${sId}`, result.opts);
+                    const levels = rFirst.data?.js?.data || rFirst.data?.js || [];
+                    const seasonItem = levels.find(lvl => {
+                        const num = parseInt((lvl.name || "").match(/season\s*(\d+)|temporada\s*(\d+)|s(\d+)/i)?.[1] || (lvl.name || "").match(/\d+/)?.[0]);
+                        return num === parseInt(season) || (lvl.name || "").includes(season);
+                    });
+                    if (seasonItem) base64Cmd = seasonItem.cmd || seasonItem.id;
+                } catch(e) { }
+            }
 
-    const epString = (season && episode) ? `|||${episode}` : '';
-    const sidStr = encodeURIComponent(base64Cmd + epString);
-    const nameStr = encodeURIComponent(result.foundItem.name || result.foundItem.title || 'Stream');
-    
-    const newId = `xlv:${result.lIdx}_${result.listSig}:${sidStr}:${nameStr}`;
-    
-    return await this.getStreams(type, newId, configBase64, host);
+            if (typeof base64Cmd === 'object') {
+                base64Cmd = Buffer.from(JSON.stringify(base64Cmd)).toString('base64');
+            } else if (typeof base64Cmd === 'string' && base64Cmd.startsWith('{')) {
+                base64Cmd = Buffer.from(base64Cmd).toString('base64');
+            }
 
-} catch (e) {
-    // Se o Promise.any falhar, é porque TODOS os portais deram erro (ou o timeout de 7s estourou)
-    console.log(`[STREAMS] ❌ "${titleInfo.name}" não encontrado em nenhum dos portais.`);
-    
-    // (Opcional) Ver o que falhou em cada portal para debug:
-    const results = await Promise.allSettled(portalPromises);
-    results.forEach((res, i) => {
-        if (res.status === 'rejected') {
-            console.log(`[STREAMS] Portal ${lists[i]?.url || i} falhou: ${res.reason.message}`);
+            const epString = (season && episode) ? `|||${episode}` : '';
+            const sidStr = encodeURIComponent(base64Cmd + epString);
+            const nameStr = encodeURIComponent(result.foundItem.name || result.foundItem.title || 'Stream');
+            
+            const newId = `xlv:${result.lIdx}_${result.listSig}:${sidStr}:${nameStr}`;
+            return await this.getStreams(type, newId, configBase64, host);
+
+        } catch (e) {
+            console.log(`[STREAMS] ❌ "${titleInfo.name}" não encontrado nos portais.`);
+            return { streams: [] };
         }
-    });
-
-    return { streams: [] };
-}
     })();
 
     global.pendingImdbSearch[id] = searchPromise;
