@@ -728,162 +728,167 @@ async getStreams(type, id, configBase64, host) {
     console.log(`[STREAMS] Pedido de stream: type=${type}, id=${id}`);
     if (type === "series") await new Promise(resolve => setTimeout(resolve, 800));
 
-   // ===== PONTE CINEMETA / IMDB -> IPTV (PESQUISA DIRETA COM SCORE) =====
-if (!id.startsWith('xlv:')) {
-    if (!global.pendingImdbSearch) global.pendingImdbSearch = {};
-    if (global.pendingImdbSearch[id]) {
-        try { return await global.pendingImdbSearch[id]; } catch(e) { return { streams: [] }; }
-    }
-
-    const searchPromise = (async () => {
-        let imdbId = id, season = null, episode = null;
-        if (id.includes(':')) {
-            const parts = id.split(':');
-            imdbId = parts[0]; season = parts[1]; episode = parts[2];
+    // ===== PONTE CINEMETA / IMDB -> IPTV (PESQUISA DIRETA COM SCORE) =====
+    if (!id.startsWith('xlv:')) {
+        if (!global.pendingImdbSearch) global.pendingImdbSearch = {};
+        if (global.pendingImdbSearch[id]) {
+            try { return await global.pendingImdbSearch[id]; } catch(e) { return { streams: [] }; }
         }
 
-        const titleInfo = await getTitleByExternalId(imdbId);
-        if (!titleInfo || !titleInfo.name) return { streams: [] };
-        console.log(`[STREAMS] Lupa Cinemeta: "${titleInfo.name}" | T${season || '-'} E${episode || '-'}`);
+        const searchPromise = (async () => {
+            let imdbId = id, season = null, episode = null;
+            if (id.includes(':')) {
+                const parts = id.split(':');
+                imdbId = parts[0]; season = parts[1]; episode = parts[2];
+            }
 
-        const normalize = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
-        const targetName = normalize(titleInfo.name);
-        const searchWords = targetName.split(' ').filter(w => w.length > 2 && !['the', 'and', 'of', 'a'].includes(w));
-        const searchQueries = [targetName];
-        if (searchWords.length > 0 && searchWords.join(' ') !== targetName) {
-            searchQueries.push(searchWords.join(' '));
-        }
+            const titleInfo = await getTitleByExternalId(imdbId);
+            if (!titleInfo || !titleInfo.name) return { streams: [] };
+            console.log(`[STREAMS] Lupa Cinemeta: "${titleInfo.name}" | T${season || '-'} E${episode || '-'}`);
 
-        const lists = this.parseConfig(configBase64);
-        
-        const searchOnPortal = async (config, lIdx) => {
-            const auth = await Promise.race([
-                this.authenticate(config),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Auth Timeout')), 3000))
-            ]);
-            if (!auth) throw new Error('Auth Falhou');
+            const normalize = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
+            const targetName = normalize(titleInfo.name);
+            const searchWords = targetName.split(' ').filter(w => w.length > 2 && !['the', 'and', 'of', 'a'].includes(w));
+            const searchQueries = [targetName];
+            if (searchWords.length > 0 && searchWords.join(' ') !== targetName) {
+                searchQueries.push(searchWords.join(' '));
+            }
 
-            const apiBase = `${auth.api}sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
-            const opts = engine.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 5000 });
-            const sType = type === "movie" ? "vod" : "series";
+            const lists = this.parseConfig(configBase64);
+            
+            const searchOnPortal = async (config, lIdx) => {
+                // Se o portal falhou recentemente (403), limpa a cache de auth para tentar de novo
+                if (global.blockedPortals && global.blockedPortals[config.url] > Date.now()) {
+                    if (engine.authCache) engine.authCache.delete(`auth_${config.url}_${config.mac || "00:1A:79:00:00:00"}`);
+                }
 
-            for (const q of searchQueries) {
-                try {
-                    const url = `${apiBase}&type=${sType}&action=get_ordered_list&search=${encodeURIComponent(q)}&p=1`;
-                    const r = await axios.get(url, opts);
-                    const data = r.data?.js?.data || r.data?.js || [];
-                    const items = Array.isArray(data) ? data : Object.values(data);
+                const auth = await Promise.race([
+                    this.authenticate(config),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Auth Timeout')), 3000))
+                ]);
+                if (!auth) throw new Error('Auth Falhou');
 
-                    // Sistema de pontuação para escolher o melhor resultado
-                    let bestMatch = null;
-                    let bestScore = -1;
-                    let hasExactMatch = false;
+                const apiBase = `${auth.api}sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+                const opts = engine.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 5000 });
+                const sType = type === "movie" ? "vod" : "series";
 
-                    items.forEach(i => {
-                        const itemName = normalize(i.name || i.title || '');
-                        let score = 0;
+                for (const q of searchQueries) {
+                    try {
+                        const url = `${apiBase}&type=${sType}&action=get_ordered_list&search=${encodeURIComponent(q)}&p=1`;
+                        const r = await axios.get(url, opts);
+                        const data = r.data?.js?.data || r.data?.js || [];
+                        const items = Array.isArray(data) ? data : Object.values(data);
 
-                        if (itemName === q) score = 100;
-                        else if (itemName.startsWith(q) && (itemName.length - q.length <= 8)) score = 95; // Ex: "the walking dead (2010)"
-                        else if (itemName.includes(q)) score = 50; // Ex: "the walking dead daryl dixon"
-                        else if (q.includes(itemName)) score = 40;
-                        else if (searchWords.length > 0 && searchWords.every(w => itemName.includes(w))) score = 30;
+                        let bestMatch = null;
+                        let bestScore = -1;
+                        let hasExactMatch = false;
 
-                        if (score >= 90) hasExactMatch = true;
+                        items.forEach(i => {
+                            const itemName = normalize(i.name || i.title || '');
+                            let score = 0;
 
-                        if (score > bestScore) {
-                            bestScore = score;
-                            bestMatch = i;
+                            if (itemName === q) score = 100;
+                            else if (itemName.startsWith(q) && (itemName.length - q.length <= 8)) score = 95;
+                            else if (itemName.includes(q)) score = 50;
+                            else if (q.includes(itemName)) score = 40;
+                            else if (searchWords.length > 0 && searchWords.every(w => itemName.includes(w))) score = 30;
+
+                            if (score >= 90) hasExactMatch = true;
+
+                            if (score > bestScore) {
+                                bestScore = score;
+                                bestMatch = i;
+                            }
+                        });
+
+                        const minScore = hasExactMatch ? 90 : 1;
+
+                        if (bestMatch && bestScore >= minScore) {
+                            console.log(`[STREAMS] 🎯 Match no servidor ${config.url}: "${bestMatch.name || bestMatch.title}" (Score: ${bestScore})`);
+                            return { config, lIdx, foundItem: bestMatch, auth, apiBase, opts, score: bestScore };
                         }
-                    });
-
-                    const minScore = hasExactMatch ? 90 : 1;
-
-                    if (bestMatch && bestScore >= minScore) {
-                        console.log(`[STREAMS] 🎯 Match no servidor ${config.url}: "${bestMatch.name || bestMatch.title}" (Score: ${bestScore})`);
-                        return { config, lIdx, foundItem: bestMatch, auth, apiBase, opts, score: bestScore };
+                    } catch(e) {
+                        if (e.response && e.response.status === 403) {
+                            if (!global.blockedPortals) global.blockedPortals = {};
+                            global.blockedPortals[config.url] = Date.now() + (5 * 60 * 1000); // 5 min castigo
+                            break;
+                        }
                     }
-                } catch(e) {
-                    if (e.response && e.response.status === 403) break;
+                }
+                throw new Error('Não encontrado');
+            };
+
+            const portalPromises = lists.map((config, lIdx) => {
+                if (!config || config.type === 'm3u') return null;
+                return searchOnPortal(config, lIdx).catch(() => null);
+            }).filter(Boolean);
+
+            const results = await Promise.race([
+                Promise.all(portalPromises),
+                new Promise(resolve => setTimeout(() => resolve([]), 5000))
+            ]);
+
+            const validResults = results ? results.filter(r => r !== null) : [];
+            let finalStreams = [];
+
+            const globalHasExactMatch = validResults.some(res => res.score >= 90);
+
+            for (const res of validResults) {
+                const { config, lIdx, foundItem, auth, apiBase, opts, score } = res;
+                
+                if (globalHasExactMatch && score < 90) continue; // Ignora spin-offs
+
+                const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
+                let base64Cmd = foundItem.cmd || foundItem.id;
+
+                if (type === 'series' && season) {
+                    try {
+                        const sId = foundItem.id;
+                        const rFirst = await axios.get(`${apiBase}&type=series&action=get_ordered_list&movie_id=${sId}`, opts);
+                        const levels = rFirst.data?.js?.data || rFirst.data?.js || [];
+                        const seasonItem = levels.find(lvl => {
+                            const num = parseInt((lvl.name || "").match(/season\s*(\d+)|temporada\s*(\d+)|s(\d+)/i)?.[1] || (lvl.name || "").match(/\d+/)?.[0]);
+                            return num === parseInt(season) || (lvl.name || "").includes(season);
+                        });
+                        if (seasonItem) base64Cmd = seasonItem.cmd || seasonItem.id;
+                    } catch(e) { }
+                }
+
+                if (typeof base64Cmd === 'object') {
+                    base64Cmd = Buffer.from(JSON.stringify(base64Cmd)).toString('base64');
+                } else if (typeof base64Cmd === 'string' && base64Cmd.startsWith('{')) {
+                    base64Cmd = Buffer.from(base64Cmd).toString('base64');
+                }
+
+                const epString = (season && episode) ? `|||${episode}` : '';
+                const sidStr = encodeURIComponent(base64Cmd + epString);
+                const nameStr = encodeURIComponent(foundItem.name || foundItem.title || 'Stream');
+                
+                const newId = `xlv:${lIdx}_${listSig}:${sidStr}:${nameStr}`;
+                
+                // Chama o código original para gerar o link e os headers
+                const streamResponse = await this.getStreams(type, newId, configBase64, host);
+                if (streamResponse && streamResponse.streams) {
+                    finalStreams = finalStreams.concat(streamResponse.streams);
                 }
             }
-            throw new Error('Não encontrado');
-        };
 
-        const portalPromises = lists.map((config, lIdx) => {
-            if (!config || config.type === 'm3u') return null;
-            return searchOnPortal(config, lIdx).catch(() => null);
-        }).filter(Boolean);
-
-        const results = await Promise.race([
-            Promise.all(portalPromises),
-            new Promise(resolve => setTimeout(() => resolve([]), 5000))
-        ]);
-
-        const validResults = results ? results.filter(r => r !== null) : [];
-        let finalStreams = [];
-
-        // Se algum servidor encontrou o match exato (Score >= 90), ignoramos os spin-offs nos outros
-        const globalHasExactMatch = validResults.some(res => res.score >= 90);
-
-        for (const res of validResults) {
-            const { config, lIdx, foundItem, auth, apiBase, opts, score } = res;
-            
-            if (globalHasExactMatch && score < 90) {
-                console.log(`[STREAMS] ⚠️ Ignorando ${config.url} (é um spin-off e existe o exato noutro servidor).`);
-                continue;
+            if (finalStreams.length === 0) {
+                console.log(`[STREAMS] ❌ Nenhum servidor tem "${titleInfo.name}".`);
+            } else {
+                console.log(`[STREAMS] 🎉 Sucesso! Links encontrados.`);
             }
 
-            const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
-            let base64Cmd = foundItem.cmd || foundItem.id;
+            return { streams: finalStreams };
+        })();
 
-            if (type === 'series' && season) {
-                try {
-                    const sId = foundItem.id;
-                    const rFirst = await axios.get(`${apiBase}&type=series&action=get_ordered_list&movie_id=${sId}`, opts);
-                    const levels = rFirst.data?.js?.data || rFirst.data?.js || [];
-                    const seasonItem = levels.find(lvl => {
-                        const num = parseInt((lvl.name || "").match(/season\s*(\d+)|temporada\s*(\d+)|s(\d+)/i)?.[1] || (lvl.name || "").match(/\d+/)?.[0]);
-                        return num === parseInt(season) || (lvl.name || "").includes(season);
-                    });
-                    if (seasonItem) base64Cmd = seasonItem.cmd || seasonItem.id;
-                } catch(e) { }
-            }
-
-            if (typeof base64Cmd === 'object') {
-                base64Cmd = Buffer.from(JSON.stringify(base64Cmd)).toString('base64');
-            } else if (typeof base64Cmd === 'string' && base64Cmd.startsWith('{')) {
-                base64Cmd = Buffer.from(base64Cmd).toString('base64');
-            }
-
-            const epString = (season && episode) ? `|||${episode}` : '';
-            const sidStr = encodeURIComponent(base64Cmd + epString);
-            const nameStr = encodeURIComponent(foundItem.name || foundItem.title || 'Stream');
-            
-            const newId = `xlv:${lIdx}_${listSig}:${sidStr}:${nameStr}`;
-            
-            const streamResponse = await this.getStreams(type, newId, configBase64, host);
-            if (streamResponse && streamResponse.streams) {
-                finalStreams = finalStreams.concat(streamResponse.streams);
-            }
+        global.pendingImdbSearch[id] = searchPromise;
+        try {
+            return await searchPromise;
+        } finally {
+            delete global.pendingImdbSearch[id];
         }
-
-        if (finalStreams.length === 0) {
-            console.log(`[STREAMS] ❌ Nenhum servidor tem "${titleInfo.name}".`);
-        } else {
-            console.log(`[STREAMS] 🎉 Sucesso! Links encontrados nos servidores corretos.`);
-        }
-
-        return { streams: finalStreams };
-    })();
-
-    global.pendingImdbSearch[id] = searchPromise;
-    try {
-        return await searchPromise;
-    } finally {
-        delete global.pendingImdbSearch[id];
     }
-}
     // ===== FIM DA PONTE =====
 
     // --- CÓDIGO ORIGINAL PARA IDs INTERNOS (xlv:) ---
@@ -896,9 +901,7 @@ if (!id.startsWith('xlv:')) {
     const lists = this.parseConfig(configBase64); const config = lists[lIdx];
     if (!config) return { streams: [] };
     
-    // Linha corrigida (o teu erro estava aqui):
     const expectedSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
-    
     if (sig && sig !== expectedSig) return { streams: [] };
 
     const pUrl = `https://${host}/proxy/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(sId)}?type=${type}`;
@@ -992,7 +995,25 @@ if (!id.startsWith('xlv:')) {
                             const finalUrl = (type === 'tv')
                                 ? `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(realCmd)}?type=${type}`
                                 : cleanUrl;
-                            streams.push({ name: '🟢 ' + name, url: finalUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+                            
+                            // ✅ INJETAR HEADERS PARA O PLAYER NÃO ENTRAR EM LOOP
+                            const headers = {
+                                "User-Agent": auth.authData.headers['User-Agent'] || "Mozilla/5.0",
+                                "Cookie": auth.authData.headers['Cookie'] || "",
+                                "Referer": auth.authData.headers['Referer'] || "",
+                                "Authorization": auth.authData.headers['Authorization'] || ""
+                            };
+
+                            streams.push({ 
+                                name: '🟢 ' + name, 
+                                url: finalUrl, 
+                                title: titleStr, 
+                                behaviorHints: { 
+                                    notWebReady: type === 'tv',
+                                    proxyHeaders: { request: headers }
+                                }, 
+                                contentType: type === 'tv' ? 'video/mp2t' : undefined 
+                            });
                             directAdded = true;
                         }
                     }
