@@ -728,7 +728,7 @@ async getStreams(type, id, configBase64, host) {
     console.log(`[STREAMS] Pedido de stream: type=${type}, id=${id}`);
     if (type === "series") await new Promise(resolve => setTimeout(resolve, 800));
 
-    // ===== PONTE CINEMETA / IMDB -> IPTV (PESQUISA DIRETA COM SCORE) =====
+    // ===== PONTE CINEMETA / IMDB -> IPTV =====
     if (!id.startsWith('xlv:')) {
         if (!global.pendingImdbSearch) global.pendingImdbSearch = {};
         if (global.pendingImdbSearch[id]) {
@@ -835,7 +835,7 @@ async getStreams(type, id, configBase64, host) {
             for (const res of validResults) {
                 const { config, lIdx, foundItem, auth, apiBase, opts, score } = res;
                 
-                if (globalHasExactMatch && score < 90) continue;
+                if (globalHasExactMatch && score < 90) continue; 
 
                 const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
                 let base64Cmd = foundItem.cmd || foundItem.id;
@@ -857,6 +857,10 @@ async getStreams(type, id, configBase64, host) {
                     base64Cmd = Buffer.from(JSON.stringify(base64Cmd)).toString('base64');
                 } else if (typeof base64Cmd === 'string' && base64Cmd.startsWith('{')) {
                     base64Cmd = Buffer.from(base64Cmd).toString('base64');
+                }
+
+                while (base64Cmd.length % 4 !== 0) {
+                    base64Cmd += '=';
                 }
 
                 const epString = (season && episode) ? `|||${episode}` : '';
@@ -987,7 +991,13 @@ async getStreams(type, id, configBase64, host) {
                         cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
                     }  
 
-                    if (cleanUrl.includes('://')) {
+                    // ✅ VERIFICAÇÃO PRECISA: Só rejeita se for EXATAMENTE a URL base do portal terminada em /c ou /c/
+                    let basePortalUrl = config.url.replace(/\/$/, "").replace(/\/c$/, "") + "/c";
+                    let isPortalPage = (cleanUrl === basePortalUrl || cleanUrl === basePortalUrl + "/");
+                    
+                    if (isPortalPage) {
+                        console.log(`[STREAMS] Link inválido (página do portal). Ignorando...`);
+                    } else if (cleanUrl.includes('://')) {
                         if (config?.useDirect !== false) {
                             const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
                             const finalUrl = (type === 'tv')
@@ -1035,4 +1045,3 @@ async getStreams(type, id, configBase64, host) {
 };
 
 module.exports = addon;
-    
