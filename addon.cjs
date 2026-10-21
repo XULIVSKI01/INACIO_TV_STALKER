@@ -764,50 +764,61 @@ if (!id.startsWith('xlv:')) {
 
         // Função que procura num único servidor
         const searchOnPortal = async (config, lIdx) => {
-            const auth = await this.authenticate(config);
-            if (!auth) throw new Error('Auth falhou');
+    if (global.blockedPortals[config.url] && global.blockedPortals[config.url] > Date.now()) {
+        throw new Error('Bloqueado (403 recente)');
+    }
 
-            const apiBase = `${auth.api}sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
-            const opts = engine.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 8000 });
-            const sType = type === "movie" ? "vod" : "series";
-            const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
+    const auth = await this.authenticate(config);
+    if (!auth) throw new Error('Falha na autenticação');
 
-            // 1. Verifica cache
-            const cachePrefix = `stalker_full_${config.url}_${type}_`;
-            let cacheKeys = Object.keys(catalogCache).filter(k => k.startsWith(cachePrefix));
-            for (const ck of cacheKeys) {
-                const cached = catalogCache[ck];
-                if (!cached || !cached.data) continue;
-                const item = cached.data.find(i => {
-                    const itemName = normalize(i.name || i.title || '');
-                    return itemName.includes(targetName) || targetName.includes(itemName) || (searchWords.length > 0 && searchWords.every(w => itemName.includes(w)));
-                });
-                if (item) return { config, lIdx, listSig, foundItem: item, auth, apiBase, opts };
-            }
+    const apiBase = `${auth.api}sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+    const opts = engine.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 8000 });
+    const sType = type === "movie" ? "vod" : "series";
+    const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
 
-            // 2. Vai ao portal (5 páginas)
-            const fetchPage = async (p) => {
-                try {
-                    const r = await axios.get(`${apiBase}&type=${sType}&action=get_ordered_list&p=${p}`, opts);
-                    const data = r.data?.js?.data || r.data?.js || [];
-                    return Array.isArray(data) ? data : Object.values(data);
-                } catch(e) { return []; }
-            };
+    // 1. Verifica cache primeiro
+    const cachePrefix = `stalker_full_${config.url}_${type}_`;
+    let cacheKeys = Object.keys(catalogCache).filter(k => k.startsWith(cachePrefix));
+    for (const ck of cacheKeys) {
+        const cached = catalogCache[ck];
+        if (!cached || !cached.data) continue;
+        const item = cached.data.find(i => {
+            const itemName = normalize(i.name || i.title || '');
+            return itemName.includes(targetName) || targetName.includes(itemName) || (searchWords.length > 0 && searchWords.every(w => itemName.includes(w)));
+        });
+        if (item) return { config, lIdx, listSig, foundItem: item, auth, apiBase, opts };
+    }
 
-            const [p1, p2, p3, p4, p5] = await Promise.all([fetchPage(1), fetchPage(2), fetchPage(3), fetchPage(4), fetchPage(5)]);
-            const loadedData = [...p1, ...p2, ...p3, ...p4, ...p5];
+    // 2. Vai ao portal sequencialmente (Páginas 1 a 10)
+    console.log(`[STREAMS] A procurar no portal ${config.url}...`);
+    for (let p = 1; p <= 10; p++) {
+        try {
+            const r = await axios.get(`${apiBase}&type=${sType}&action=get_ordered_list&p=${p}`, opts);
+            const data = r.data?.js?.data || r.data?.js || [];
+            const items = Array.isArray(data) ? data : Object.values(data);
             
-            const fullKey = `stalker_full_${config.url}_${type}_all`;
-            if (loadedData.length > 0) catalogCache[fullKey] = { data: loadedData, lastUpdate: Date.now(), complete: (p5.length === 0) };
-            
-            const foundItem = loadedData.find(i => {
+            if (items.length === 0) break; // Chegou ao fim do catálogo
+
+            const foundItem = items.find(i => {
                 const itemName = normalize(i.name || i.title || '');
                 return itemName.includes(targetName) || targetName.includes(itemName) || (searchWords.length > 0 && searchWords.every(w => itemName.includes(w)));
             });
 
             if (foundItem) return { config, lIdx, listSig, foundItem, auth, apiBase, opts };
-            throw new Error('Não encontrado');
-        };
+
+            // Pausa de 200ms entre páginas para não bloquear o portal
+            await new Promise(resolve => setTimeout(resolve, 200));
+
+        } catch (e) {
+            if (e.response && (e.response.status === 403 || e.response.status === 429)) {
+                console.log(`[STREAMS] 🛑 Portal ${config.url} bloqueou (${e.response.status}). Em castigo por 5 min.`);
+                global.blockedPortals[config.url] = Date.now() + 5 * 60 * 1000;
+                throw new Error('Portal bloqueou');
+            }
+        }
+    }
+    throw new Error('Não encontrado');
+};
 
         // Dispara a procura em TODOS os portais ao mesmo tempo
         const portalPromises = lists.map((config, lIdx) => {
