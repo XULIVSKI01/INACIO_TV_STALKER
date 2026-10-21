@@ -757,7 +757,6 @@ async getStreams(type, id, configBase64, host) {
             const lists = this.parseConfig(configBase64);
             
             const searchOnPortal = async (config, lIdx) => {
-                // Se o portal falhou recentemente (403), limpa a cache de auth para tentar de novo
                 if (global.blockedPortals && global.blockedPortals[config.url] > Date.now()) {
                     if (engine.authCache) engine.authCache.delete(`auth_${config.url}_${config.mac || "00:1A:79:00:00:00"}`);
                 }
@@ -810,7 +809,7 @@ async getStreams(type, id, configBase64, host) {
                     } catch(e) {
                         if (e.response && e.response.status === 403) {
                             if (!global.blockedPortals) global.blockedPortals = {};
-                            global.blockedPortals[config.url] = Date.now() + (5 * 60 * 1000); // 5 min castigo
+                            global.blockedPortals[config.url] = Date.now() + (5 * 60 * 1000); 
                             break;
                         }
                     }
@@ -836,7 +835,7 @@ async getStreams(type, id, configBase64, host) {
             for (const res of validResults) {
                 const { config, lIdx, foundItem, auth, apiBase, opts, score } = res;
                 
-                if (globalHasExactMatch && score < 90) continue; // Ignora spin-offs
+                if (globalHasExactMatch && score < 90) continue;
 
                 const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
                 let base64Cmd = foundItem.cmd || foundItem.id;
@@ -866,7 +865,6 @@ async getStreams(type, id, configBase64, host) {
                 
                 const newId = `xlv:${lIdx}_${listSig}:${sidStr}:${nameStr}`;
                 
-                // Chama o código original para gerar o link e os headers
                 const streamResponse = await this.getStreams(type, newId, configBase64, host);
                 if (streamResponse && streamResponse.streams) {
                     finalStreams = finalStreams.concat(streamResponse.streams);
@@ -996,21 +994,12 @@ async getStreams(type, id, configBase64, host) {
                                 ? `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(realCmd)}?type=${type}`
                                 : cleanUrl;
                             
-                            // ✅ INJETAR HEADERS PARA O PLAYER NÃO ENTRAR EM LOOP
-                            const headers = {
-                                "User-Agent": auth.authData.headers['User-Agent'] || "Mozilla/5.0",
-                                "Cookie": auth.authData.headers['Cookie'] || "",
-                                "Referer": auth.authData.headers['Referer'] || "",
-                                "Authorization": auth.authData.headers['Authorization'] || ""
-                            };
-
                             streams.push({ 
                                 name: '🟢 ' + name, 
                                 url: finalUrl, 
                                 title: titleStr, 
                                 behaviorHints: { 
-                                    notWebReady: type === 'tv',
-                                    proxyHeaders: { request: headers }
+                                    notWebReady: type === 'tv'
                                 }, 
                                 contentType: type === 'tv' ? 'video/mp2t' : undefined 
                             });
