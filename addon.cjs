@@ -22,16 +22,35 @@ function cleanTitle(title) {
     return title.replace(/\[.*?\]/g, '').replace(/\(.*\)/g, '').replace(/(S\d+|T\d+).*/i, '').replace(/(1080p|720p|4k|uhd|hdtv|x264|x265|hevc|dual|latino|legendado|multi|v1|v2)/gi, '').trim();
 }
 
-// Ponte entre IMDB (Stremio) e TMDB (para obter o nome)
-async function getTmdbNameFromImdb(imdbId, type) {
+// ===== PONTE CINEMETA (HELPER) =====
+const tmdbCache = {};
+async function getTitleByExternalId(externalId) {
     try {
-        const findUrl = `https://api.themoviedb.org/3/find/${imdbId}?api_key=${TMDB_API_KEY}&external_source=imdb_id&language=pt-PT`;
-        const res = await axios.get(findUrl);
-        const results = type === 'movie' ? res.data.movie_results : res.data.tv_results;
-        return results && results.length > 0 ? results[0].name || results[0].title : null;
+        if (tmdbCache[externalId]) return tmdbCache[externalId];
+        let url;
+        const imdbMatch = externalId.match(/tt\d+/);
+        if (imdbMatch) {
+            url = `https://api.themoviedb.org/3/find/${imdbMatch[0]}?api_key=${TMDB_API_KEY}&external_source=imdb_id`;
+        } else {
+            return null;
+        }
+
+        const res = await axios.get(url);
+        let result = null;
+        
+        if (res.data && res.data.movie_results && res.data.movie_results.length > 0) {
+            result = { name: res.data.movie_results[0].title, year: res.data.movie_results[0].release_date?.split('-')[0] };
+        }
+        if (res.data && res.data.tv_results && res.data.tv_results.length > 0) {
+            result = { name: res.data.tv_results[0].name, year: res.data.tv_results[0].first_air_date?.split('-')[0] };
+        }
+        
+        if (result) tmdbCache[externalId] = result;
+        return result;
     } catch (e) {
-        return null;
+        console.warn(`[EXTERNAL ID] Erro: ${e.message}`);
     }
+    return null;
 }
 
 async function parseM3U(url, config) {
@@ -58,29 +77,6 @@ async function parseM3U(url, config) {
 }
 
 if (!global.streamLinkCache) global.streamLinkCache = {};
-
-async function getTitleByExternalId(externalId) {
-    try {
-        let url;
-        const imdbMatch = externalId.match(/tt\d+/);
-        if (imdbMatch) {
-            url = `https://api.themoviedb.org/3/find/${imdbMatch[0]}?api_key=${TMDB_API_KEY}&external_source=imdb_id`;
-        } else {
-            return null;
-        }
-
-        const res = await axios.get(url);
-        if (res.data && res.data.movie_results && res.data.movie_results.length > 0) {
-            return { name: res.data.movie_results[0].title, year: res.data.movie_results[0].release_date?.split('-')[0] };
-        }
-        if (res.data && res.data.tv_results && res.data.tv_results.length > 0) {
-            return { name: res.data.tv_results[0].name, year: res.data.tv_results[0].first_air_date?.split('-')[0] };
-        }
-    } catch (e) {
-        console.warn(`[EXTERNAL ID] Erro: ${e.message}`);
-    }
-    return null;
-}
 
 const addon = {
     getAxiosOpts(config, extraOpts = {}) {
@@ -234,19 +230,6 @@ const addon = {
             }
         }));
         const addonName = lists.map(l => l.name).filter(Boolean).join(" + ") || "XuloV Hub";
-        // Catálogos de pesquisa (lupa do Stremio)
-catalogs.push({
-    type: "movie",
-    id: "search",
-    name: "🔍 Pesquisar Filmes (IPTV)",
-    extra: [{ name: "search", isRequired: true }]
-});
-catalogs.push({
-    type: "series",
-    id: "search",
-    name: "🔍 Pesquisar Séries (IPTV)",
-    extra: [{ name: "search", isRequired: true }]
-});
         const m = { id: "org.xulov.stalker", version: "5.3.0", name: addonName, resources: ["catalog", "stream", "meta"], types: ["tv", "movie", "series"], idPrefixes: ["xlv:", "tt"], catalogs: catalogs };
         setCache(cacheKey, m, 60); 
         console.log("[MANIFEST] Manifest gerado com sucesso.");
@@ -254,84 +237,49 @@ catalogs.push({
     },
     
     async getCatalog(type, id, extra, configBase64) {
-    const normalize = (str) => (str || '').replace(/\s+/g, ' ').trim().toLowerCase();
-    console.log(`[CATALOG] Pedido: type=${type}, id=${id}, genre=${extra.genre || 'N/A'}, skip=${extra.skip || 0}`);
-    const lists = this.parseConfig(configBase64);
+        const normalize = (str) => (str || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        console.log(`[CATALOG] Pedido: type=${type}, id=${id}, genre=${extra.genre || 'N/A'}, skip=${extra.skip || 0}`);
+        const lists = this.parseConfig(configBase64);
+        
+        // --- PESQUISA NA LUPA (IPTV) ---
+        if (id === "search" && extra.search) {
+            const query = extra.search.toLowerCase().trim();
+            console.log(`[SEARCH] Pesquisa: "${query}" (type=${type})`);
+            let allResults = [];
+            const seen = new Set();
 
-    // ===== PESQUISA (lupa do Stremio) =====
-    if (id === "search" && extra.search) {
-        const query = extra.search.toLowerCase().trim();
-        console.log(`[SEARCH] Pesquisa: "${query}" (type=${type})`);
-
-        let allResults = [];
-        const seen = new Set();
-
-        for (let lIdx = 0; lIdx < lists.length; lIdx++) {
-            const config = lists[lIdx];
-            const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
-
-            // Stalker — usa o catalogCache
-            if (config.type === 'stalker') {
-                const prefix = `stalker_full_${config.url}_${type}_`;
-                const cacheKeys = Object.keys(catalogCache).filter(k => k.startsWith(prefix));
-                console.log(`[SEARCH] ${cacheKeys.length} caches encontradas para ${config.url}`);
-                
-                for (const ck of cacheKeys) {
-                    const cached = catalogCache[ck];
-                    if (!cached || !cached.data) continue;
-                    cached.data.forEach(m => {
-                        const nm = (m.name || m.title || '').toLowerCase();
-                        if (nm.includes(query) && !seen.has(nm)) {
-                            seen.add(nm);
-                            const targetId = m.cmd || m.id;
-                            allResults.push({
-                                id: `xlv:${lIdx}_${listSig}:${encodeURIComponent(targetId)}:${encodeURIComponent(m.name || m.title)}:${encodeURIComponent(m.logo || m.screenshot_uri || '')}`,
-                                name: m.name || m.title,
-                                type,
-                                poster: m.logo || m.screenshot_uri,
-                                posterShape: type === "tv" ? "landscape" : "poster"
-                            });
-                        }
-                    });
-                }
-            }
-            // Xtream
-            else if (config.type === 'xtream') {
-                const b = config.url.trim().replace(/\/$/, "");
-                const cacheKey = `xtream_${b}_${config.user}_${type}_all`;
-                let data = catalogCache[cacheKey]?.data;
-                if (!data) {
-                    try {
-                        const api = `${b}/player_api.php?username=${encodeURIComponent(config.user)}&password=${encodeURIComponent(config.pass)}`;
-                        const act = type === "movie" ? "get_vod_streams" : "get_series";
-                        const res = await axios.get(`${api}&action=${act}`, this.getAxiosOpts(config, {timeout: 10000}));
-                        data = Array.isArray(res.data) ? res.data : [];
-                        catalogCache[cacheKey] = { data, lastUpdate: Date.now() };
-                    } catch(e) { continue; }
-                }
-                data.forEach(item => {
-                    const nm = (item.name || item.title || '').toLowerCase();
-                    if (nm.includes(query) && !seen.has(nm)) {
-                        seen.add(nm);
-                        allResults.push({
-                            id: `xlv:${lIdx}_${listSig}:${item.stream_id || item.series_id}:${encodeURIComponent(item.name || item.title)}:${encodeURIComponent(item.stream_icon || item.cover || '')}`,
-                            name: item.name || item.title,
-                            type,
-                            poster: item.stream_icon || item.cover,
-                            posterShape: type === "tv" ? "landscape" : "poster"
+            for (let lIdx = 0; lIdx < lists.length; lIdx++) {
+                const config = lists[lIdx];
+                const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
+                if (config.type === 'stalker') {
+                    const prefix = `stalker_full_${config.url}_${type}_`;
+                    const cacheKeys = Object.keys(catalogCache).filter(k => k.startsWith(prefix));
+                    for (const ck of cacheKeys) {
+                        const cached = catalogCache[ck];
+                        if (!cached || !cached.data) continue;
+                        cached.data.forEach(m => {
+                            const nm = (m.name || m.title || '').toLowerCase();
+                            if (nm.includes(query) && !seen.has(nm)) {
+                                seen.add(nm);
+                                const targetId = m.cmd || m.id;
+                                allResults.push({
+                                    id: `xlv:${lIdx}_${listSig}:${encodeURIComponent(targetId)}:${encodeURIComponent(m.name || m.title)}:${encodeURIComponent(m.logo || m.screenshot_uri || '')}`,
+                                    name: m.name || m.title,
+                                    type,
+                                    poster: m.logo || m.screenshot_uri,
+                                    posterShape: type === "tv" ? "landscape" : "poster"
+                                });
+                            }
                         });
                     }
-                });
+                }
             }
+            console.log(`[SEARCH] ${allResults.length} resultados para "${query}"`);
+            return { metas: allResults.slice(0, 50) };
         }
 
-        console.log(`[SEARCH] ${allResults.length} resultados para "${query}"`);
-        return { metas: allResults.slice(0, 50) };
-    }
-    // ===== FIM DA PESQUISA =====
-
-    const lIdx = parseInt(id.split('_')[1]);
-    const config = lists[lIdx]; if (!config) return { metas: [] };
+        const lIdx = parseInt(id.split('_')[1]);
+        const config = lists[lIdx]; if (!config) return { metas: [] };
 
         const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
         const skip = parseInt(extra.skip) || 0;
@@ -488,7 +436,7 @@ catalogs.push({
 
     async getMeta(type, id, configBase64) {
         console.log(`[META] Pedido: type=${type}, id=${id}`);
-        if (id.startsWith('tt')) return { meta: {} }; // Deixa o Cinemeta tratar dos metadados
+        if (id.startsWith('tt')) return { meta: {} }; // Cinemeta trata dos metadados
         const parts = id.split(":");
         const lIdxParts = parts[1].split("_");
         const lIdx = parseInt(lIdxParts[0]);
@@ -724,324 +672,265 @@ catalogs.push({
         return { meta };
     },
 
-async getStreams(type, id, configBase64, host) {
-    console.log(`[STREAMS] Pedido de stream: type=${type}, id=${id}`);
-    if (type === "series") await new Promise(resolve => setTimeout(resolve, 800));
+    async getStreams(type, id, configBase64, host) {
+        console.log(`[STREAMS] Pedido de stream: type=${type}, id=${id}`);
+        if (type === "series") await new Promise(resolve => setTimeout(resolve, 800));
 
-    // ===== PONTE CINEMETA / IMDB -> IPTV =====
-    if (!id.startsWith('xlv:')) {
-        if (!global.pendingImdbSearch) global.pendingImdbSearch = {};
-        if (global.pendingImdbSearch[id]) {
-            try { return await global.pendingImdbSearch[id]; } catch(e) { return { streams: [] }; }
-        }
-
-        const searchPromise = (async () => {
-            let imdbId = id, season = null, episode = null;
-            if (id.includes(':')) {
-                const parts = id.split(':');
-                imdbId = parts[0]; season = parts[1]; episode = parts[2];
+        // ===== PONTE CINEMETA (LUPA DO STREMIO) =====
+        if (!id.startsWith('xlv:')) {
+            if (!global.pendingImdbSearch) global.pendingImdbSearch = {};
+            if (global.pendingImdbSearch[id]) {
+                try { return await global.pendingImdbSearch[id]; } catch(e) { return { streams: [] }; }
             }
 
-            const titleInfo = await getTitleByExternalId(imdbId);
-            if (!titleInfo || !titleInfo.name) return { streams: [] };
-            console.log(`[STREAMS] Lupa Cinemeta: "${titleInfo.name}" | T${season || '-'} E${episode || '-'}`);
-
-            const normalize = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
-            const targetName = normalize(titleInfo.name);
-            const searchWords = targetName.split(' ').filter(w => w.length > 2 && !['the', 'and', 'of', 'a'].includes(w));
-            const searchQueries = [targetName];
-            if (searchWords.length > 0 && searchWords.join(' ') !== targetName) {
-                searchQueries.push(searchWords.join(' '));
-            }
-
-            const lists = this.parseConfig(configBase64);
-            
-            const searchOnPortal = async (config, lIdx) => {
-                if (global.blockedPortals && global.blockedPortals[config.url] > Date.now()) {
-                    if (engine.authCache) engine.authCache.delete(`auth_${config.url}_${config.mac || "00:1A:79:00:00:00"}`);
+            const searchPromise = (async () => {
+                let imdbId = id, season = null, episode = null;
+                if (id.includes(':')) {
+                    const parts = id.split(':');
+                    imdbId = parts[0]; season = parts[1]; episode = parts[2];
                 }
 
-                const auth = await Promise.race([
-                    this.authenticate(config),
-                    new Promise((_, reject) => setTimeout(() => reject(new Error('Auth Timeout')), 3000))
-                ]);
-                if (!auth) throw new Error('Auth Falhou');
+                const titleInfo = await getTitleByExternalId(imdbId);
+                if (!titleInfo || !titleInfo.name) return { streams: [] };
+                console.log(`[STREAMS] Lupa Cinemeta: "${titleInfo.name}" | T${season || '-'} E${episode || '-'}`);
 
-                const apiBase = `${auth.api}sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
-                const opts = engine.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 5000 });
-                const sType = type === "movie" ? "vod" : "series";
+                const normalize = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
+                const targetName = normalize(titleInfo.name);
+                const searchWords = targetName.split(' ').filter(w => w.length > 2 && !['the', 'and', 'of', 'a'].includes(w));
+                const searchQueries = [targetName];
+                if (searchWords.length > 0 && searchWords.join(' ') !== targetName) {
+                    searchQueries.push(searchWords.join(' '));
+                }
 
-                for (const q of searchQueries) {
-                    try {
-                        const url = `${apiBase}&type=${sType}&action=get_ordered_list&search=${encodeURIComponent(q)}&p=1`;
-                        const r = await axios.get(url, opts);
-                        const data = r.data?.js?.data || r.data?.js || [];
-                        const items = Array.isArray(data) ? data : Object.values(data);
+                const lists = this.parseConfig(configBase64);
+                let finalStreams = [];
 
-                        let bestMatch = null;
-                        let bestScore = -1;
-                        let hasExactMatch = false;
+                for (let lIdx = 0; lIdx < lists.length; lIdx++) {
+                    const config = lists[lIdx];
+                    if (!config || config.type === 'm3u') continue;
 
-                        items.forEach(i => {
-                            const itemName = normalize(i.name || i.title || '');
-                            let score = 0;
+                    let foundItem = null;
+                    let auth = await this.authenticate(config);
+                    if (!auth) continue;
 
-                            if (itemName === q) score = 100;
-                            else if (itemName.startsWith(q) && (itemName.length - q.length <= 8)) score = 95;
-                            else if (itemName.includes(q)) score = 50;
-                            else if (q.includes(itemName)) score = 40;
-                            else if (searchWords.length > 0 && searchWords.every(w => itemName.includes(w))) score = 30;
+                    const apiBase = `${auth.api}sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+                    const opts = engine.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 5000 });
+                    const sType = type === "movie" ? "vod" : "series";
 
-                            if (score >= 90) hasExactMatch = true;
+                    for (const q of searchQueries) {
+                        try {
+                            const url = `${apiBase}&type=${sType}&action=get_ordered_list&search=${encodeURIComponent(q)}&p=1`;
+                            const r = await axios.get(url, opts);
+                            const data = r.data?.js?.data || r.data?.js || [];
+                            const items = Array.isArray(data) ? data : Object.values(data);
 
-                            if (score > bestScore) {
-                                bestScore = score;
-                                bestMatch = i;
+                            let bestMatch = null;
+                            let bestScore = -1;
+
+                            items.forEach(i => {
+                                const itemName = normalize(i.name || i.title || '');
+                                let score = 0;
+                                if (itemName === q) score = 100;
+                                else if (itemName.startsWith(q) && (itemName.length - q.length <= 8)) score = 95;
+                                else if (itemName.includes(q)) score = 50;
+                                else if (q.includes(itemName)) score = 40;
+                                else if (searchWords.length > 0 && searchWords.every(w => itemName.includes(w))) score = 30;
+
+                                if (score > bestScore) { bestScore = score; bestMatch = i; }
+                            });
+
+                            if (bestMatch && bestScore >= 30) {
+                                foundItem = bestMatch;
+                                break;
                             }
-                        });
+                        } catch(e) { }
+                    }
 
-                        const minScore = hasExactMatch ? 90 : 1;
+                    if (foundItem) {
+                        let cmdToUse = foundItem.cmd || foundItem.id;
 
-                        if (bestMatch && bestScore >= minScore) {
-                            console.log(`[STREAMS] 🎯 Match no servidor ${config.url}: "${bestMatch.name || bestMatch.title}" (Score: ${bestScore})`);
-                            return { config, lIdx, foundItem: bestMatch, auth, apiBase, opts, score: bestScore };
+                        if (type === 'series' && season) {
+                            try {
+                                const rFirst = await axios.get(`${apiBase}&type=series&action=get_ordered_list&movie_id=${foundItem.id}`, opts);
+                                const levels = rFirst.data?.js?.data || rFirst.data?.js || [];
+                                const seasonItem = levels.find(lvl => {
+                                    const num = parseInt((lvl.name || "").match(/season\s*(\d+)|temporada\s*(\d+)|s(\d+)/i)?.[1] || (lvl.name || "").match(/\d+/)?.[0]);
+                                    return num === parseInt(season) || (lvl.name || "").includes(season);
+                                });
+                                if (seasonItem) cmdToUse = seasonItem.cmd || seasonItem.id;
+                            } catch(e) { }
                         }
-                    } catch(e) {
-                        if (e.response && e.response.status === 403) {
-                            if (!global.blockedPortals) global.blockedPortals = {};
-                            global.blockedPortals[config.url] = Date.now() + (5 * 60 * 1000); 
-                            break;
+
+                        if (typeof cmdToUse === 'object') cmdToUse = Buffer.from(JSON.stringify(cmdToUse)).toString('base64');
+                        
+                        const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
+                        const epString = (season && episode) ? `|||${episode}` : '';
+                        const sidStr = encodeURIComponent(cmdToUse + epString);
+                        const nameStr = encodeURIComponent(foundItem.name || foundItem.title || 'Stream');
+                        
+                        const newId = `xlv:${lIdx}_${listSig}:${sidStr}:${nameStr}`;
+                        
+                        // Chama o código ORIGINAL para gerar os links
+                        const streamResponse = await this.getStreams(type, newId, configBase64, host);
+                        if (streamResponse && streamResponse.streams) {
+                            finalStreams = finalStreams.concat(streamResponse.streams);
                         }
                     }
                 }
-                throw new Error('Não encontrado');
-            };
 
-            const portalPromises = lists.map((config, lIdx) => {
-                if (!config || config.type === 'm3u') return null;
-                return searchOnPortal(config, lIdx).catch(() => null);
-            }).filter(Boolean);
-
-            const results = await Promise.race([
-                Promise.all(portalPromises),
-                new Promise(resolve => setTimeout(() => resolve([]), 5000))
-            ]);
-
-            const validResults = results ? results.filter(r => r !== null) : [];
-            let finalStreams = [];
-
-            const globalHasExactMatch = validResults.some(res => res.score >= 90);
-
-            for (const res of validResults) {
-                const { config, lIdx, foundItem, auth, apiBase, opts, score } = res;
-                
-                if (globalHasExactMatch && score < 90) continue; 
-
-                const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
-                let base64Cmd = foundItem.cmd || foundItem.id;
-
-                if (type === 'series' && season) {
-                    try {
-                        const sId = foundItem.id;
-                        const rFirst = await axios.get(`${apiBase}&type=series&action=get_ordered_list&movie_id=${sId}`, opts);
-                        const levels = rFirst.data?.js?.data || rFirst.data?.js || [];
-                        const seasonItem = levels.find(lvl => {
-                            const num = parseInt((lvl.name || "").match(/season\s*(\d+)|temporada\s*(\d+)|s(\d+)/i)?.[1] || (lvl.name || "").match(/\d+/)?.[0]);
-                            return num === parseInt(season) || (lvl.name || "").includes(season);
-                        });
-                        if (seasonItem) base64Cmd = seasonItem.cmd || seasonItem.id;
-                    } catch(e) { }
+                if (finalStreams.length === 0) {
+                    console.log(`[STREAMS] ❌ Nenhum servidor tem "${titleInfo.name}".`);
+                } else {
+                    console.log(`[STREAMS] 🎉 Sucesso! Links encontrados.`);
                 }
 
-                if (typeof base64Cmd === 'object') {
-                    base64Cmd = Buffer.from(JSON.stringify(base64Cmd)).toString('base64');
-                } else if (typeof base64Cmd === 'string' && base64Cmd.startsWith('{')) {
-                    base64Cmd = Buffer.from(base64Cmd).toString('base64');
-                }
+                return { streams: finalStreams };
+            })();
 
-                while (base64Cmd.length % 4 !== 0) {
-                    base64Cmd += '=';
-                }
-
-                const epString = (season && episode) ? `|||${episode}` : '';
-                const sidStr = encodeURIComponent(base64Cmd + epString);
-                const nameStr = encodeURIComponent(foundItem.name || foundItem.title || 'Stream');
-                
-                const newId = `xlv:${lIdx}_${listSig}:${sidStr}:${nameStr}`;
-                
-                const streamResponse = await this.getStreams(type, newId, configBase64, host);
-                if (streamResponse && streamResponse.streams) {
-                    finalStreams = finalStreams.concat(streamResponse.streams);
-                }
-            }
-
-            if (finalStreams.length === 0) {
-                console.log(`[STREAMS] ❌ Nenhum servidor tem "${titleInfo.name}".`);
-            } else {
-                console.log(`[STREAMS] 🎉 Sucesso! Links encontrados.`);
-            }
-
-            return { streams: finalStreams };
-        })();
-
-        global.pendingImdbSearch[id] = searchPromise;
-        try {
-            return await searchPromise;
-        } finally {
-            delete global.pendingImdbSearch[id];
-        }
-    }
-    // ===== FIM DA PONTE =====
-
-    // --- CÓDIGO ORIGINAL PARA IDs INTERNOS (xlv:) ---
-    const parts = id.split(":"); 
-    const lIdxParts = parts[1].split("_");
-    const lIdx = parseInt(lIdxParts[0]);
-    const sig = lIdxParts[1];
-    const sId = parts[2];
-    const name = decodeURIComponent(parts[3] || "Stream");
-    const lists = this.parseConfig(configBase64); const config = lists[lIdx];
-    if (!config) return { streams: [] };
-    
-    const expectedSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
-    if (sig && sig !== expectedSig) return { streams: [] };
-
-    const pUrl = `https://${host}/proxy/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(sId)}?type=${type}`;
-    let streams = [];
-    let directAdded = false;
-
-    if (config?.type === 'xtream') {
-        if (config?.useDirect !== false) {
-            const b = config.url.trim().replace(/\/$/, "");
-            if (type === 'tv') {
-                streams.push({ name: name, url: `${b}/${config.user}/${config.pass}/${sId}`, title: `📺 Directo TV`, behaviorHints: { notWebReady: true }, contentType: 'video/mp2t' });
-            } else if (type === 'movie') {
-                streams.push({ name: name, url: `${b}/movie/${config.user}/${config.pass}/${sId}`, title: `🎬 Directo Filme`, behaviorHints: { notWebReady: false } });
-            } else if (type === 'series') {
-                streams.push({ name: name, url: `${b}/series/${config.user}/${config.pass}/${sId}`, title: `🍿 Directo Série - ${name}`, behaviorHints: { notWebReady: false } });
+            global.pendingImdbSearch[id] = searchPromise;
+            try {
+                return await searchPromise;
+            } finally {
+                delete global.pendingImdbSearch[id];
             }
         }
-    } else if (config?.type === 'm3u') {
-        const url = decodeURIComponent(sId);
-        if (config?.useDirect !== false) {
-            streams.push({ name: name, url: url, title: '📺 Directo M3U', behaviorHints: { notWebReady: true }, contentType: 'video/mp2t' });
-            directAdded = true;
-        }
-    } else {
-        try {
-            let auth = await engine.authenticate(config, config.proxy);
-            if (auth) {
-                const decodedCmd = decodeURIComponent(sId);
-                let realCmd = decodedCmd;
-                let sNum = null;
-                if (decodedCmd.includes('|||')) {
-                    let partsCmd = decodedCmd.split('|||');
-                    realCmd = partsCmd[0];
-                    sNum = partsCmd[1];
-                } else if (decodedCmd.includes('|')) {
-                    let partsCmd = decodedCmd.split('|');
-                    realCmd = partsCmd[0];
-                    sNum = partsCmd[1];
+        // ===== FIM DA PONTE =====
+
+        // --- CÓDIGO ORIGINAL INTACTO ---
+        const parts = id.split(":"); 
+        const lIdxParts = parts[1].split("_");
+        const lIdx = parseInt(lIdxParts[0]);
+        const sig = lIdxParts[1];
+        const sId = parts[2];
+        const name = decodeURIComponent(parts[3] || "Stream");
+        const lists = this.parseConfig(configBase64); const config = lists[lIdx];
+        if (!config) return { streams: [] };
+        const expectedSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
+        if (sig && sig !== expectedSig) return { streams: [] };
+
+        const pUrl = `https://${host}/proxy/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(sId)}?type=${type}`;
+        let streams = [];
+        let directAdded = false;
+
+        if (config?.type === 'xtream') {
+            if (config?.useDirect !== false) {
+                const b = config.url.trim().replace(/\/$/, "");
+                if (type === 'tv') {
+                    streams.push({ name: name, url: `${b}/${config.user}/${config.pass}/${sId}`, title: `📺 Directo TV`, behaviorHints: { notWebReady: true }, contentType: 'video/mp2t' });
+                } else if (type === 'movie') {
+                    streams.push({ name: name, url: `${b}/movie/${config.user}/${config.pass}/${sId}`, title: `🎬 Directo Filme`, behaviorHints: { notWebReady: false } });
+                } else if (type === 'series') {
+                    streams.push({ name: name, url: `${b}/series/${config.user}/${config.pass}/${sId}`, title: `🍿 Directo Série - ${name}`, behaviorHints: { notWebReady: false } });
                 }
+            }
+        } else if (config?.type === 'm3u') {
+            const url = decodeURIComponent(sId);
+            if (config?.useDirect !== false) {
+                streams.push({ name: name, url: url, title: '📺 Directo M3U', behaviorHints: { notWebReady: true }, contentType: 'video/mp2t' });
+                directAdded = true;
+            }
+        } else {
+            try {
+                let auth = await engine.authenticate(config, config.proxy);
+                if (auth) {
+                    const decodedCmd = decodeURIComponent(sId);
+                    let realCmd = decodedCmd;
+                    let sNum = null;
+                    if (decodedCmd.includes('|||')) {
+                        let partsCmd = decodedCmd.split('|||');
+                        realCmd = partsCmd[0];
+                        sNum = partsCmd[1];
+                    } else if (decodedCmd.includes('|')) {
+                        let partsCmd = decodedCmd.split('|');
+                        realCmd = partsCmd[0];
+                        sNum = partsCmd[1];
+                    }
 
-                const linkCacheKey = `${config.url}_${config.mac || ''}_${type}_${realCmd}_${sNum || ''}`;
-                let cmdUrl = null;
+                    const linkCacheKey = `${config.url}_${config.mac || ''}_${type}_${realCmd}_${sNum || ''}`;
+                    let cmdUrl = null;
 
-                if (!global.pendingLinkRequests) global.pendingLinkRequests = {};
+                    if (!global.pendingLinkRequests) global.pendingLinkRequests = {};
 
-                const cachedLink = global.streamLinkCache && global.streamLinkCache[linkCacheKey];
-                if (cachedLink && Date.now() - cachedLink.ts < 5000) {
-                    cmdUrl = cachedLink.url;
-                }
-                else if (global.pendingLinkRequests[linkCacheKey]) {
-                    try { cmdUrl = await global.pendingLinkRequests[linkCacheKey]; } catch(e) { cmdUrl = null; }
-                }
-                else {
-                    const DIRECT_URL_SERVERS = ['geral.cc', 'vpn.connectra1', 'painelbest', 'b1.jinbox', 'vip.rxs1'];
-                    const cleanCmd = realCmd.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/i, "").trim();
-                    const isAlreadyDirectUrl = DIRECT_URL_SERVERS.some(s => config.url.includes(s))
-                        && (cleanCmd.startsWith('http://') || cleanCmd.startsWith('https://'))
-                        && !cleanCmd.includes('localhost');
-
-                    if (isAlreadyDirectUrl) {
-                        cmdUrl = cleanCmd;
-                        if (!global.streamLinkCache) global.streamLinkCache = {};
-                        global.streamLinkCache[linkCacheKey] = { url: cmdUrl, ts: Date.now() };
-                    } else {
+                    const cachedLink = global.streamLinkCache && global.streamLinkCache[linkCacheKey];
+                    if (cachedLink && Date.now() - cachedLink.ts < 5000) {
+                        cmdUrl = cachedLink.url;
+                        console.log(`[LINK CACHE] Reutilizado para ${realCmd} (${Math.round((Date.now()-cachedLink.ts))}ms)`);
+                    }
+                    else if (global.pendingLinkRequests[linkCacheKey]) {
+                        console.log(`[LINK PENDING] A aguardar pedido em curso para ${realCmd}`);
+                        try {
+                            cmdUrl = await global.pendingLinkRequests[linkCacheKey];
+                        } catch(e) { cmdUrl = null; }
+                    }
+                    else {
+                        console.log(`[LINK] A criar link para ${realCmd}...`);
                         const promise = (async () => {
                             let url = await engine.createStreamLink(auth, config, realCmd, type, sNum);
                             if (!url || url.trim() === "") {
+                                console.log(`[LINK] 1ª tentativa falhou. Forçando novo token...`);
                                 const newAuth = await engine.authenticate(config, config.proxy);
                                 if (newAuth) url = await engine.createStreamLink(newAuth, config, realCmd, type, sNum);
                             }
                             return url;
                         })();
                         global.pendingLinkRequests[linkCacheKey] = promise;
-                        try { cmdUrl = await promise; } finally { delete global.pendingLinkRequests[linkCacheKey]; }
+                        try {
+                            cmdUrl = await promise;
+                        } finally {
+                            delete global.pendingLinkRequests[linkCacheKey];
+                        }
                         if (cmdUrl && typeof cmdUrl === 'string' && cmdUrl.trim() !== '') {
                             if (!global.streamLinkCache) global.streamLinkCache = {};
                             global.streamLinkCache[linkCacheKey] = { url: cmdUrl, ts: Date.now() };
+                            console.log(`[LINK] ✅ Link obtido para ${realCmd}`);
                         }
                     }
-                }
 
-                if (typeof cmdUrl === 'string' && cmdUrl.trim() !== "") {
-                    let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
-                    if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
-                        cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
-                    }  
+                    if (typeof cmdUrl === 'string' && cmdUrl.trim() !== "") {
+                        console.log(`[STREAMS] URL obtido: ${cmdUrl}`);
+                        let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
+                        if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
+                            cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
+                        }  
 
-                    // ✅ VERIFICAÇÃO PRECISA: Só rejeita se for EXATAMENTE a URL base do portal terminada em /c ou /c/
-                    let basePortalUrl = config.url.replace(/\/$/, "").replace(/\/c$/, "") + "/c";
-                    let isPortalPage = (cleanUrl === basePortalUrl || cleanUrl === basePortalUrl + "/");
-                    
-                    if (isPortalPage) {
-                        console.log(`[STREAMS] Link inválido (página do portal). Ignorando...`);
-                    } else if (cleanUrl.includes('://')) {
-                        if (config?.useDirect !== false) {
-                            const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-                            const finalUrl = (type === 'tv')
-                                ? `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(realCmd)}?type=${type}`
-                                : cleanUrl;
-                            
-                            streams.push({ 
-                                name: '🟢 ' + name, 
-                                url: finalUrl, 
-                                title: titleStr, 
-                                behaviorHints: { 
-                                    notWebReady: type === 'tv'
-                                }, 
-                                contentType: type === 'tv' ? 'video/mp2t' : undefined 
-                            });
-                            directAdded = true;
+                        if (cleanUrl.includes('://')) {
+                            if (config?.useDirect !== false) {
+                                const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
+                                const finalUrl = (type === 'tv')
+                                    ? `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(realCmd)}?type=${type}`
+                                    : cleanUrl;
+                                streams.push({ name: '🟢 ' + name, url: finalUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+                                directAdded = true;
+                            }
                         }
+                    } else {
+                        console.warn(`[STREAMS WARNING] Nenhuma tentativa devolveu link válido para ${id}`);
+                    }
+                }
+            } catch(e) { 
+                console.error(`[STREAM ERROR] Falha no processo de link Stalker para ${id}:`, e.message); 
+            }
+
+            if (!directAdded) {
+                if (config?.useDirect !== false) {
+                    let fallbackUrl = decodeURIComponent(sId).split('|||')[0].split('|')[0].replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
+                    if (fallbackUrl.startsWith('http')) {
+                        const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
+                        streams.push({ name: '🟢 ' + name, url: fallbackUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
                     }
                 }
             }
-        } catch(e) { 
-            console.error(`[STREAM ERROR] Falha no processo de link Stalker para ${id}:`, e.message); 
         }
 
-        if (!directAdded) {
-            if (config?.useDirect !== false) {
-                let fallbackUrl = decodeURIComponent(sId).split('|||')[0].split('|')[0].replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
-                if (fallbackUrl.startsWith('http')) {
-                    const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-                    streams.push({ name: '🟢 ' + name, url: fallbackUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
-                }
-            }
+        const useProxy = config?.useProxy !== false;
+        if (useProxy) {
+            const hint = config?.streamHint || '';
+            const proxyTitle = (hint ? hint + ' ' : '') + 
+                               (type === 'movie' ? '🎬 Proxy Estável' : (type === 'series' ? `🍿 Proxy Estável - ${name}` : '🔄 Proxy Estável'));
+            streams.push({ name: '🟢 ' + name, url: pUrl, title: proxyTitle, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
         }
+        return { streams };
     }
-
-    const useProxy = config?.useProxy !== false;
-    if (useProxy) {
-        const hint = config?.streamHint || '';
-        const proxyTitle = (hint ? hint + ' ' : '') + 
-                           (type === 'movie' ? '🎬 Proxy Estável' : (type === 'series' ? `🍿 Proxy Estável - ${name}` : '🔄 Proxy Estável'));
-        streams.push({ name: '🟢 ' + name, url: pUrl, title: proxyTitle, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
-    }
-    return { streams };
-  }
 };
 
 module.exports = addon;
