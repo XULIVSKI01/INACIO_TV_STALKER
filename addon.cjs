@@ -737,12 +737,12 @@ async getStreams(type, id, configBase64, host) {
     console.log(`[STREAMS] Pedido de stream: type=${type}, id=${id}`);
     if (type === "series") await new Promise(resolve => setTimeout(resolve, 800));
 
-    // ===== PONTE CINEMETA / IMDB -> IPTV =====
+digest('hex').substring(0,4);
+
+            // ===== PONTE CINEMETA / IMDB -> IPTV (PESQUISA DIRETA) =====
 if (!id.startsWith('xlv:')) {
     
     if (!global.pendingImdbSearch) global.pendingImdbSearch = {};
-    if (!global.blockedPortals) global.blockedPortals = {};
-
     if (global.pendingImdbSearch[id]) {
         try { return await global.pendingImdbSearch[id]; } catch(e) { return { streams: [] }; }
     }
@@ -756,96 +756,81 @@ if (!id.startsWith('xlv:')) {
 
         const titleInfo = await getTitleByExternalId(imdbId);
         if (!titleInfo || !titleInfo.name) return { streams: [] };
-        console.log(`[STREAMS] Nome no TMDB: "${titleInfo.name}" | T${season || '-'} E${episode || '-'}`);
+        console.log(`[STREAMS] Lupa Cinemeta: "${titleInfo.name}" | T${season || '-'} E${episode || '-'}`);
 
+        // Prepara a pesquisa (tenta o nome completo e depois só as palavras principais)
         const normalize = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
         const targetName = normalize(titleInfo.name);
         const searchWords = targetName.split(' ').filter(w => w.length > 2 && !['the', 'and', 'of', 'a'].includes(w));
+        const searchQueries = [targetName];
+        if (searchWords.length > 0 && searchWords.join(' ') !== targetName) {
+            searchQueries.push(searchWords.join(' '));
+        }
 
         const lists = this.parseConfig(configBase64);
         
-        // Filtra APENAS os portais Stalker (ignora M3U e Xtream para esta pesquisa)
-        const stalkerLists = lists.filter(c => c && (c.type === 'stalker' || !c.type)).map((c, i) => ({ config: c, lIdx: lists.indexOf(c) }));
-
-        const searchOnPortal = async (portalInfo) => {
-            const { config, lIdx } = portalInfo;
-            console.log(`[STREAMS] 🔍 A testar portal: ${config.url}`);
-            
-            if (global.blockedPortals[config.url] && global.blockedPortals[config.url] > Date.now()) {
-                throw new Error('Bloqueado (403 recente)');
-            }
-
+        // Função que pesquisa num único portal usando o &search=
+        const searchOnPortal = async (config, lIdx) => {
             const auth = await Promise.race([
                 this.authenticate(config),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout Auth')), 3500))
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Auth Timeout')), 3000))
             ]);
-            if (!auth) throw new Error('Falha na autenticação');
+            if (!auth) throw new Error('Auth Falhou');
 
             const apiBase = `${auth.api}sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
             const opts = engine.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 5000 });
             const sType = type === "movie" ? "vod" : "series";
-            const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
 
-            // Verifica cache
-            const cachePrefix = `stalker_full_${config.url}_${type}_`;
-            let cacheKeys = Object.keys(catalogCache).filter(k => k.startsWith(cachePrefix));
-            for (const ck of cacheKeys) {
-                const cached = catalogCache[ck];
-                if (!cached || !cached.data) continue;
-                const item = cached.data.find(i => {
-                    const itemName = normalize(i.name || i.title || '');
-                    return itemName.includes(targetName) || targetName.includes(itemName) || (searchWords.length > 0 && searchWords.every(w => itemName.includes(w)));
-                });
-                if (item) return { config, lIdx, listSig, foundItem: item, auth, apiBase, opts };
-            }
-
-            // Pesquisa no portal
-            for (let p = 1; p <= 5; p++) {
+            for (const q of searchQueries) {
                 try {
-                    const r = await axios.get(`${apiBase}&type=${sType}&action=get_ordered_list&p=${p}`, opts);
+                    // O SEGREDO ESTÁ AQUI: usar &search= para pedir os resultados diretos
+                    const url = `${apiBase}&type=${sType}&action=get_ordered_list&search=${encodeURIComponent(q)}&p=1`;
+                    const r = await axios.get(url, opts);
                     const data = r.data?.js?.data || r.data?.js || [];
                     const items = Array.isArray(data) ? data : Object.values(data);
-                    
-                    if (items.length === 0) break; 
 
+                    // Confirma se o que voltou realmente corresponde ao que pesquisámos
                     const foundItem = items.find(i => {
                         const itemName = normalize(i.name || i.title || '');
-                        return itemName.includes(targetName) || targetName.includes(itemName) || (searchWords.length > 0 && searchWords.every(w => itemName.includes(w)));
+                        return itemName.includes(q) || q.includes(itemName);
                     });
 
-                    if (foundItem) return { config, lIdx, listSig, foundItem, auth, apiBase, opts };
-
-                    await new Promise(resolve => setTimeout(resolve, 50));
-                } catch (e) {
-                    if (e.response && (e.response.status === 403 || e.response.status === 429)) {
-                        global.blockedPortals[config.url] = Date.now() + 5 * 60 * 1000;
-                        throw new Error('Portal bloqueou (403)');
+                    if (foundItem) {
+                        console.log(`[STREAMS] ✅ Encontrado no servidor ${config.url}`);
+                        return { config, lIdx, foundItem, auth, apiBase, opts };
                     }
+                } catch(e) {
+                    if (e.response && e.response.status === 403) break; // Salta se bloquear
                 }
             }
-            throw new Error('Não encontrado nas primeiras 5 páginas');
+            throw new Error('Não encontrado');
         };
 
-        try {
-            // Dispara a procura em todos os portais em paralelo
-            const portalPromises = stalkerLists.map(info => searchOnPortal(info));
-            
-            // Limite de tempo global de 7 segundos
-            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout Global')), 7000));
-            
-            const result = await Promise.race([
-                Promise.any(portalPromises),
-                timeoutPromise
-            ]);
-            
-            console.log(`[STREAMS] ✅ Encontrado no portal ${result.config.url}: ${result.foundItem.name || result.foundItem.title}`);
-            
-            let base64Cmd = result.foundItem.cmd || result.foundItem.id;
+        // Testa todos os portais em paralelo
+        const portalPromises = lists.map((config, lIdx) => {
+            if (!config || config.type === 'm3u') return null;
+            return searchOnPortal(config, lIdx).catch(() => null);
+        }).filter(Boolean);
 
+        // Espera até 5 segundos por respostas
+        const results = await Promise.race([
+            Promise.all(portalPromises),
+            new Promise(resolve => setTimeout(() => resolve([]), 5000))
+        ]);
+
+        const validResults = results ? results.filter(r => r !== null) : [];
+        let finalStreams = [];
+
+        for (const res of validResults) {
+            const { config, lIdx, foundItem, auth, apiBase, opts } = res;
+            const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
+            let base64Cmd = foundItem.cmd || foundItem.id;
+
+            // Se for série, vai à pasta buscar o episódio exato
             if (type === 'series' && season) {
                 try {
-                    const sId = result.foundItem.id;
-                    const rFirst = await axios.get(`${result.apiBase}&type=series&action=get_ordered_list&movie_id=${sId}`, result.opts);
+                    const sId = foundItem.id;
+                    const rFirst = await axios.get(`${apiBase}&type=series&action=get_ordered_list&movie_id=${sId}`, opts);
                     const levels = rFirst.data?.js?.data || rFirst.data?.js || [];
                     const seasonItem = levels.find(lvl => {
                         const num = parseInt((lvl.name || "").match(/season\s*(\d+)|temporada\s*(\d+)|s(\d+)/i)?.[1] || (lvl.name || "").match(/\d+/)?.[0]);
@@ -863,15 +848,24 @@ if (!id.startsWith('xlv:')) {
 
             const epString = (season && episode) ? `|||${episode}` : '';
             const sidStr = encodeURIComponent(base64Cmd + epString);
-            const nameStr = encodeURIComponent(result.foundItem.name || result.foundItem.title || 'Stream');
+            const nameStr = encodeURIComponent(foundItem.name || foundItem.title || 'Stream');
             
-            const newId = `xlv:${result.lIdx}_${result.listSig}:${sidStr}:${nameStr}`;
-            return await this.getStreams(type, newId, configBase64, host);
-
-        } catch (e) {
-            console.log(`[STREAMS] ❌ "${titleInfo.name}" não encontrado nos portais.`);
-            return { streams: [] };
+            const newId = `xlv:${lIdx}_${listSig}:${sidStr}:${nameStr}`;
+            
+            // Vai buscar os links (Directo/Proxy) que o teu código original gera
+            const streamResponse = await this.getStreams(type, newId, configBase64, host);
+            if (streamResponse && streamResponse.streams) {
+                finalStreams = finalStreams.concat(streamResponse.streams);
+            }
         }
+
+        if (finalStreams.length === 0) {
+            console.log(`[STREAMS] ❌ Nenhum dos teus servidores tem "${titleInfo.name}".`);
+        } else {
+            console.log(`[STREAMS] 🎉 Sucesso! ${finalStreams.length} links encontrados em ${validResults.length} servidores.`);
+        }
+
+        return { streams: finalStreams };
     })();
 
     global.pendingImdbSearch[id] = searchPromise;
