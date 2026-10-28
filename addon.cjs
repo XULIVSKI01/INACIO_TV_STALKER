@@ -671,6 +671,7 @@ const addon = {
         }
         return { meta };
     },
+    
     async getStreams(type, id, configBase64, host) {
     console.log(`[STREAMS] Pedido de stream: type=${type}, id=${id}`);
     if (type === "series") await new Promise(resolve => setTimeout(resolve, 800));
@@ -709,12 +710,10 @@ const addon = {
             const lists = this.parseConfig(configBase64);
             let finalStreams = [];
 
-            // Prepara os pedidos em paralelo
             const serverPromises = lists.map(async (config, lIdx) => {
                 if (!config || config.type === 'm3u') return null;
 
                 try {
-                    // Autentica com timeout de 4s
                     const auth = await Promise.race([
                         this.authenticate(config),
                         new Promise((_, r) => setTimeout(() => r(new Error('Auth Timeout')), 4000))
@@ -739,11 +738,9 @@ const addon = {
                             const itemClean = cleanName(rawName);
                             let isMatch = false;
 
-                            if (itemClean === targetName) {
-                                isMatch = true;
-                            } else if (targetName.length < 6) {
-                                const regex = new RegExp(`^${targetName}\\b`, 'i');
-                                if (regex.test(itemClean)) isMatch = true;
+                            if (itemClean === targetName) isMatch = true;
+                            else if (targetName.length < 6) {
+                                if (new RegExp(`^${targetName}\\b`, 'i').test(itemClean)) isMatch = true;
                             } else {
                                 if (itemClean.includes(targetName)) isMatch = true;
                             }
@@ -767,8 +764,7 @@ const addon = {
                         if (seasonItem) {
                             cmdToUse = seasonItem.cmd || seasonItem.id;
                         } else {
-                            console.log(`[STREAMS] ⚠️ T${season} não existe em ${config.url}.`);
-                            return null;
+                            return null; // Temporada não existe
                         }
                     }
 
@@ -782,11 +778,10 @@ const addon = {
 
                     return { config, lIdx, foundItem, cmdToUse, season, episode };
                 } catch(e) {
-                    return null; // Se um servidor falhar ou der timeout, ignoramos
+                    return null;
                 }
             });
 
-            // Espera que todos os servidores respondam, no máximo 6 segundos
             const results = await Promise.race([
                 Promise.all(serverPromises),
                 new Promise(resolve => setTimeout(() => resolve([]), 6000))
@@ -794,7 +789,6 @@ const addon = {
 
             const validResults = (results || []).filter(r => r !== null);
 
-            // Gera os links finais
             for (const res of validResults) {
                 const { config, lIdx, foundItem, cmdToUse, season, episode } = res;
                 const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
@@ -803,7 +797,6 @@ const addon = {
                 const nameStr = encodeURIComponent(foundItem.name || foundItem.title || 'Stream');
                 
                 const newId = `xlv:${lIdx}_${listSig}:${sidStr}:${nameStr}`;
-                console.log(`[STREAMS] 🎯 Match validado em ${config.url}: "${foundItem.name}"`);
                 
                 const streamResponse = await this.getStreams(type, newId, configBase64, host);
                 if (streamResponse && streamResponse.streams) {
@@ -839,7 +832,15 @@ const addon = {
     let streams = [];
     let directAdded = false;
     
-    const serverName = config.name || config.url.replace(/^https?:\/\//, '').split(':')[0];
+    // ✅ LIMPEZA DO NOME DO SERVIDOR (A CORREÇÃO DO PROBLEMA DA IMAGEM)
+    let serverName = config.name || '';
+    if (!serverName || serverName.startsWith('http') || serverName.includes('://')) {
+        serverName = config.url;
+    }
+    serverName = serverName.replace(/^https?:\/\//i, '').replace(/:\d+.*$/, '').replace(/\/.*$/, '').trim();
+
+    // ✅ TÍTULO LIMPO (O QUE APARECE EMBAIXO)
+    const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
 
     if (config?.type === 'xtream') {
         if (config?.useDirect !== false) {
@@ -912,7 +913,6 @@ const addon = {
 
                     if (cleanUrl.includes('://')) {
                         if (config?.useDirect !== false) {
-                            const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
                             const finalUrl = (type === 'tv')
                                 ? `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(realCmd)}?type=${type}`
                                 : cleanUrl;
@@ -931,7 +931,6 @@ const addon = {
             if (config?.useDirect !== false) {
                 let fallbackUrl = decodeURIComponent(sId).split('|||')[0].split('|')[0].replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
                 if (fallbackUrl.startsWith('http')) {
-                    const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
                     streams.push({ name: `🟢 ${serverName}`, url: fallbackUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
                 }
             }
@@ -1226,3 +1225,4 @@ const addon = {
 };
 
 module.exports = addon;
+    
