@@ -676,7 +676,7 @@ const addon = {
     console.log(`[STREAMS] Pedido de stream: type=${type}, id=${id}`);
     if (type === "series") await new Promise(resolve => setTimeout(resolve, 800));
 
-    // ===== PONTE CINEMETA (LUPA DO STREMIO) EM PARALELO =====
+    // ===== PONTE CINEMETA (LUPA DO STREMIO) =====
     if (!id.startsWith('xlv:')) {
         if (!global.pendingImdbSearch) global.pendingImdbSearch = {};
         if (global.pendingImdbSearch[id]) {
@@ -764,7 +764,7 @@ const addon = {
                         if (seasonItem) {
                             cmdToUse = seasonItem.cmd || seasonItem.id;
                         } else {
-                            return null; // Temporada não existe
+                            return null;
                         }
                     }
 
@@ -776,7 +776,43 @@ const addon = {
 
                     while (cmdToUse.length % 4 !== 0) cmdToUse += '=';
 
-                    return { config, lIdx, foundItem, cmdToUse, season, episode };
+                    // ✅ AGORA GERAMOS O LINK AQUI MESMO, USANDO O AUTH (MAC) EXATO DESTE SERVIDOR
+                    const decodedCmd = cmdToUse;
+                    const sNum = (season && episode) ? episode : null;
+                    
+                    let cmdUrl = await engine.createStreamLink(auth, config, decodedCmd, type, sNum);
+                    if (!cmdUrl || cmdUrl.trim() === "") {
+                        const newAuth = await engine.authenticate(config, config.proxy);
+                        if (newAuth) cmdUrl = await engine.createStreamLink(newAuth, config, decodedCmd, type, sNum);
+                    }
+
+                    if (!cmdUrl) return null;
+
+                    let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
+                    if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
+                        cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
+                    }
+
+                    let serverName = config.name || '';
+                    if (!serverName || serverName.startsWith('http') || serverName.includes('://')) {
+                        serverName = config.url;
+                    }
+                    serverName = serverName.replace(/^https?:\/\//i, '').replace(/:\d+.*$/, '').replace(/\/.*$/, '').trim();
+
+                    const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${titleInfo.name}` : '⚡ Directo TV');
+                    
+                    console.log(`[STREAMS] ✅ Link isolado gerado para ${serverName} (MAC: ${config.mac || 'default'})`);
+
+                    const streamObj = {
+                        name: `🟢 ${serverName}`,
+                        url: (type === 'tv') ? `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(decodedCmd)}?type=${type}` : cleanUrl,
+                        title: titleStr,
+                        behaviorHints: { notWebReady: type === 'tv' },
+                        contentType: type === 'tv' ? 'video/mp2t' : undefined
+                    };
+
+                    return streamObj;
+
                 } catch(e) {
                     return null;
                 }
@@ -787,22 +823,7 @@ const addon = {
                 new Promise(resolve => setTimeout(() => resolve([]), 6000))
             ]);
 
-            const validResults = (results || []).filter(r => r !== null);
-
-            for (const res of validResults) {
-                const { config, lIdx, foundItem, cmdToUse, season, episode } = res;
-                const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
-                const epString = (season && episode) ? `|||${episode}` : '';
-                const sidStr = encodeURIComponent(cmdToUse + epString);
-                const nameStr = encodeURIComponent(foundItem.name || foundItem.title || 'Stream');
-                
-                const newId = `xlv:${lIdx}_${listSig}:${sidStr}:${nameStr}`;
-                
-                const streamResponse = await this.getStreams(type, newId, configBase64, host);
-                if (streamResponse && streamResponse.streams) {
-                    finalStreams = finalStreams.concat(streamResponse.streams);
-                }
-            }
+            finalStreams = (results || []).filter(r => r !== null);
 
             return { streams: finalStreams };
         })();
@@ -832,14 +853,12 @@ const addon = {
     let streams = [];
     let directAdded = false;
     
-    // ✅ LIMPEZA DO NOME DO SERVIDOR (A CORREÇÃO DO PROBLEMA DA IMAGEM)
     let serverName = config.name || '';
     if (!serverName || serverName.startsWith('http') || serverName.includes('://')) {
         serverName = config.url;
     }
     serverName = serverName.replace(/^https?:\/\//i, '').replace(/:\d+.*$/, '').replace(/\/.*$/, '').trim();
 
-    // ✅ TÍTULO LIMPO (O QUE APARECE EMBAIXO)
     const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
 
     if (config?.type === 'xtream') {
