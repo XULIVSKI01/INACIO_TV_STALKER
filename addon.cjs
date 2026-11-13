@@ -705,6 +705,35 @@ async getStreams(type, id, configBase64, host) {
         cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
     }  
 
+     if (cleanUrl.includes('://')) {
+    if (config?.useDirect !== false) {
+        const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
+        const finalUrl = (type === 'tv')
+            ? `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(realCmd)}?type=${type}`
+            : cleanUrl;
+
+        // ✅ TENTAR FORÇAR OS HEADERS (Para o Tizen não cair aos 5s)
+        const headers = {
+            "User-Agent": "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3",
+            "Referer": config.url + "/c/",
+            "Cookie": auth.authData.headers['Cookie'] || ""
+        };
+
+        streams.push({ 
+            name: '🟢 ' + name, 
+            url: finalUrl, 
+            title: titleStr, 
+            behaviorHints: { 
+                notWebReady: type === 'tv',
+                proxyHeaders: { request: headers } // Isto obriga o player a enviar os headers
+            }, 
+            contentType: type === 'tv' ? 'video/mp2t' : undefined 
+        });
+        directAdded = true;
+    }
+     }
+     
+/*
    if (cleanUrl.includes('://')) {
     if (config?.useDirect !== false) {
         const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
@@ -717,7 +746,7 @@ async getStreams(type, id, configBase64, host) {
         directAdded = true;
     }
 }
-  
+  */
 } else {
     console.warn(`[STREAMS WARNING] Nenhuma tentativa devolveu link válido para ${id}`);
 }
