@@ -660,20 +660,17 @@ const addon = {
 
                 if (!global.pendingLinkRequests) global.pendingLinkRequests = {};
 
-                // 1) Cache curta (5s) — absorve a rajada paralela do Stremio
                 const cachedLink = global.streamLinkCache && global.streamLinkCache[linkCacheKey];
                 if (cachedLink && Date.now() - cachedLink.ts < 5000) {
                     cmdUrl = cachedLink.url;
-                    console.log(`[LINK CACHE] Reutilizado para ${realCmd} (${Math.round((Date.now()-cachedLink.ts))}ms)`);
+                    console.log(`[LINK CACHE] Reutilizado para ${realCmd}`);
                 }
-                // 2) Se já há um create_link em curso para o mesmo canal → aguarda
                 else if (global.pendingLinkRequests[linkCacheKey]) {
                     console.log(`[LINK PENDING] A aguardar pedido em curso para ${realCmd}`);
                     try {
                         cmdUrl = await global.pendingLinkRequests[linkCacheKey];
                     } catch(e) { cmdUrl = null; }
                 }
-                // 3) Ninguém pediu ainda → cria agora
                 else {
                     console.log(`[LINK] A criar link para ${realCmd}...`);
                     const promise = (async () => {
@@ -699,66 +696,53 @@ const addon = {
                 }
 
                 if (typeof cmdUrl === 'string' && cmdUrl.trim() !== "") {
-    console.log(`[STREAMS] URL obtido: ${cmdUrl}`);
-    let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
-    if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
-        cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
-    }  
+                    console.log(`[STREAMS] URL obtido: ${cmdUrl}`);
+                    let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
+                    if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
+                        cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
+                    }  
 
-    // ✅ A MAGIA PARA A SAMSUNG (ZERO BANDA)
-    // Se o link for daqueles servidores com porta 2096, limpamos o link!
-    if (cleanUrl.includes(':2096') || cleanUrl.includes('ssl.i-main')) {
-        console.log(`[STREAMS] A limpar link SSL para a TV aceitar...`);
-        cleanUrl = cleanUrl.replace('https://', 'http://'); // Muda para HTTP
-        cleanUrl = cleanUrl.replace(':2096', ''); // Remove a porta esquisita (usa a 80)
-    }
+                    if (cleanUrl.includes('://')) {
+                        if (config?.useDirect !== false) {
+                            const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
+                            
+                            // ✅ REGRA AUTOMÁTICA: 
+                            // Se for TV e o link NÃO tiver localhost -> Vai direto para a TV (Zero Banda).
+                            // Se tiver localhost -> Vai para o META-SHIELD (porque a TV não consegue aceder).
+                            const isLocalhost = cleanUrl.includes('localhost') || cleanUrl.includes('127.0.0.1');
+                            const finalUrl = (type === 'tv' && isLocalhost)
+                                ? `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(realCmd)}?type=${type}`
+                                : cleanUrl;
 
-    if (cleanUrl.includes('://')) {
-        if (config?.useDirect !== false) {
-            const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-            
-            // Envia o link limpo DIRETAMENTE para a TV (Zero Banda)
-            streams.push({ 
-                name: '🟢 ' + name, 
-                url: cleanUrl, 
-                title: titleStr, 
-                behaviorHints: { notWebReady: type === 'tv' }, 
-                contentType: type === 'tv' ? 'video/mp2t' : undefined 
-            });
-            directAdded = true;
-            console.log(`[STREAMS] Link limpo enviado para a TV: ${cleanUrl.substring(0, 50)}...`);
-        }
-    }
-                                                            
-                } else {
-                    console.warn(`[STREAMS WARNING] Nenhuma tentativa devolveu link válido para ${id}`);
+                            streams.push({ name: '🟢 ' + name, url: finalUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+                            directAdded = true;
+                            
+                            if (isLocalhost) console.log(`[STREAMS] Link Localhost -> META-SHIELD`);
+                            else console.log(`[STREAMS] Link Externo -> Directo para a TV (Zero Banda)`);
+                        }
+                    }
                 }
             }
         } catch(e) { 
             console.error(`[STREAM ERROR] Falha no processo de link Stalker para ${id}:`, e.message); 
         }
 
-        
-        // ===== AQUI ESTÁ A CORREÇÃO =====
         if (!directAdded) {
             if (config?.useDirect !== false) {
                 let fallbackUrl = decodeURIComponent(sId).split('|||')[0].split('|')[0].replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
                 if (fallbackUrl.startsWith('http')) {
                     const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
                     
-                    // Se for TV e o link for de um servidor restrito, envia para o META-SHIELD
-                    const needsShield = (type === 'tv' && (fallbackUrl.includes('fukkyour.com') || fallbackUrl.includes(':2096') || fallbackUrl.includes('ssl.i-main')));
-                    
-                    const finalFallbackUrl = needsShield
+                    // ✅ REGRA AUTOMÁTICA NO FALLBACK
+                    const isLocalhost = fallbackUrl.includes('localhost') || fallbackUrl.includes('127.0.0.1');
+                    const finalFallbackUrl = (type === 'tv' && isLocalhost)
                         ? `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(fallbackUrl)}?type=${type}`
                         : fallbackUrl;
 
                     streams.push({ name: '🟢 ' + name, url: finalFallbackUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
-                    if (needsShield) console.log(`[STREAMS] Fallback restrito enviado para o META-SHIELD: ${name}`);
                 }
             }
         }
-        
     }
 
     const useProxy = config?.useProxy !== false;
@@ -769,7 +753,7 @@ const addon = {
         streams.push({ name: '🟢 ' + name, url: pUrl, title: proxyTitle, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
     }
     return { streams };
-    }
+}
 /*
 async getStreams(type, id, configBase64, host) {
     console.log(`[STREAMS] Pedido de stream: type=${type}, id=${id}`);
