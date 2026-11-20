@@ -601,8 +601,8 @@ const addon = {
         }
         return { meta };
     },
-/*
-    async getStreams(type, id, configBase64, host) {
+
+                async getStreams(type, id, configBase64, host) {
     console.log(`[STREAMS] Pedido de stream: type=${type}, id=${id}`);
     if (type === "series") await new Promise(resolve => setTimeout(resolve, 800));
 
@@ -702,13 +702,18 @@ const addon = {
                         cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
                     }  
 
+                    // ✅ AQUI ESTÁ A TUA IDEIA: TROCAR A PORTA 2096 POR 8080
+                    if (cleanUrl.includes(':2096')) {
+                        console.log(`[STREAMS] A trocar a porta 2096 por 8080 para a TV...`);
+                        cleanUrl = cleanUrl.replace(':2096', ':8080');
+                    }
+
                     if (cleanUrl.includes('://')) {
                         if (config?.useDirect !== false) {
                             const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
                             
-                            // ✅ REGRA AUTOMÁTICA: 
-                            // Se for TV e o link NÃO tiver localhost -> Vai direto para a TV (Zero Banda).
-                            // Se tiver localhost -> Vai para o META-SHIELD (porque a TV não consegue aceder).
+                            // Se for TV e ainda tiver localhost, manda para o META-SHIELD.
+                            // Se já tiver a porta 8080 (link limpo), manda DIRETO para a TV.
                             const isLocalhost = cleanUrl.includes('localhost') || cleanUrl.includes('127.0.0.1');
                             const finalUrl = (type === 'tv' && isLocalhost)
                                 ? `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(realCmd)}?type=${type}`
@@ -717,8 +722,7 @@ const addon = {
                             streams.push({ name: '🟢 ' + name, url: finalUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
                             directAdded = true;
                             
-                            if (isLocalhost) console.log(`[STREAMS] Link Localhost -> META-SHIELD`);
-                            else console.log(`[STREAMS] Link Externo -> Directo para a TV (Zero Banda)`);
+                            if (!isLocalhost) console.log(`[STREAMS] Link Direto (Porta 8080) enviado para a TV: ${cleanUrl.substring(0, 50)}...`);
                         }
                     }
                 }
@@ -733,7 +737,11 @@ const addon = {
                 if (fallbackUrl.startsWith('http')) {
                     const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
                     
-                    // ✅ REGRA AUTOMÁTICA NO FALLBACK
+                    // Troca a porta no fallback também
+                    if (fallbackUrl.includes(':2096')) {
+                        fallbackUrl = fallbackUrl.replace(':2096', ':8080');
+                    }
+                    
                     const isLocalhost = fallbackUrl.includes('localhost') || fallbackUrl.includes('127.0.0.1');
                     const finalFallbackUrl = (type === 'tv' && isLocalhost)
                         ? `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(fallbackUrl)}?type=${type}`
@@ -753,8 +761,8 @@ const addon = {
         streams.push({ name: '🟢 ' + name, url: pUrl, title: proxyTitle, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
     }
     return { streams };
-}
-*/
+                }
+    /*
 async getStreams(type, id, configBase64, host) {
     console.log(`[STREAMS] Pedido de stream: type=${type}, id=${id}`);
     if (type === "series") await new Promise(resolve => setTimeout(resolve, 800));
@@ -899,7 +907,7 @@ async getStreams(type, id, configBase64, host) {
     }
     return { streams };
     }
-    
+    */
 };
 
 module.exports = addon;
