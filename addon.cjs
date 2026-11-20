@@ -602,7 +602,7 @@ const addon = {
         return { meta };
     },
 
-   async getStreams(type, id, configBase64, host) {
+async getStreams(type, id, configBase64, host) {
     console.log(`[STREAMS] Pedido de stream: type=${type}, id=${id}`);
     if (type === "series") await new Promise(resolve => setTimeout(resolve, 800));
 
@@ -670,7 +670,6 @@ const addon = {
                     } catch(e) { cmdUrl = null; }
                 }
                 else {
-                    console.log(`[LINK] A criar link para ${realCmd}...`);
                     const promise = (async () => {
                         let url = await engine.createStreamLink(auth, config, realCmd, type, sNum);
                         if (!url || url.trim() === "") {
@@ -688,7 +687,6 @@ const addon = {
                     if (cmdUrl && typeof cmdUrl === 'string' && cmdUrl.trim() !== '') {
                         if (!global.streamLinkCache) global.streamLinkCache = {};
                         global.streamLinkCache[linkCacheKey] = { url: cmdUrl, ts: Date.now() };
-                        console.log(`[LINK] ✅ Link obtido para ${realCmd}`);
                     }
                 }
 
@@ -703,13 +701,26 @@ const addon = {
                         if (config?.useDirect !== false) {
                             const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
                             
-                            // ✅ REGRA AUTOMÁTICA (Sem listas de servidores)
+                            // ✅ O TESTE DO LINK DIRETO COM HEADERS
                             const isLocalhost = cleanUrl.includes('localhost') || cleanUrl.includes('127.0.0.1');
                             const finalUrl = (type === 'tv' && isLocalhost)
                                 ? `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(realCmd)}?type=${type}`
                                 : cleanUrl;
 
-                            streams.push({ name: '🟢 ' + name, url: finalUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+                            // Se for TV, tenta forçar os headers exatos da MAG no player da TV
+                            const behaviorHints = { notWebReady: type === 'tv' };
+                            if (type === 'tv' && !isLocalhost) {
+                                behaviorHints.proxyHeaders = {
+                                    request: {
+                                        "User-Agent": "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3",
+                                        "Cookie": auth.authData.headers['Cookie'] || "",
+                                        "Referer": config.url + "/c/"
+                                    }
+                                };
+                                console.log(`[STREAMS] A enviar Link Direto + Headers MAG para a TV...`);
+                            }
+
+                            streams.push({ name: '🟢 ' + name, url: finalUrl, title: titleStr, behaviorHints: behaviorHints, contentType: type === 'tv' ? 'video/mp2t' : undefined });
                             directAdded = true;
                         }
                     }
@@ -744,7 +755,7 @@ const addon = {
         streams.push({ name: '🟢 ' + name, url: pUrl, title: proxyTitle, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
     }
     return { streams };
-   } 
+                                }
 
     /*
 
