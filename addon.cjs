@@ -601,7 +601,7 @@ const addon = {
         }
         return { meta };
     },
-
+/*
     async getStreams(type, id, configBase64, host) {
     console.log(`[STREAMS] Pedido de stream: type=${type}, id=${id}`);
     if (type === "series") await new Promise(resolve => setTimeout(resolve, 800));
@@ -754,7 +754,7 @@ const addon = {
     }
     return { streams };
 }
-/*
+*/
 async getStreams(type, id, configBase64, host) {
     console.log(`[STREAMS] Pedido de stream: type=${type}, id=${id}`);
     if (type === "series") await new Promise(resolve => setTimeout(resolve, 800));
@@ -899,7 +899,7 @@ async getStreams(type, id, configBase64, host) {
     }
     return { streams };
     }
-    */
+    
 };
 
 module.exports = addon;
