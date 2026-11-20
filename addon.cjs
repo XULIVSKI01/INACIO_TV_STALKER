@@ -699,22 +699,37 @@ const addon = {
                 }
 
                 if (typeof cmdUrl === 'string' && cmdUrl.trim() !== "") {
-                    console.log(`[STREAMS] URL obtido: ${cmdUrl}`);
-                    let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
-                    if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
-                        cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
-                    }  
+    console.log(`[STREAMS] URL obtido: ${cmdUrl}`);
+    let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
+    if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
+        cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
+    }  
 
-                    if (cleanUrl.includes('://')) {
-                        if (config?.useDirect !== false) {
-                            const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-                            const finalUrl = (type === 'tv')
-                                ? `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(realCmd)}?type=${type}`
-                                : cleanUrl;
-                            streams.push({ name: '🟢 ' + name, url: finalUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
-                            directAdded = true;
-                        }
-                    }  
+    // ✅ A MAGIA PARA A SAMSUNG (ZERO BANDA)
+    // Se o link for daqueles servidores com porta 2096, limpamos o link!
+    if (cleanUrl.includes(':2096') || cleanUrl.includes('ssl.i-main')) {
+        console.log(`[STREAMS] A limpar link SSL para a TV aceitar...`);
+        cleanUrl = cleanUrl.replace('https://', 'http://'); // Muda para HTTP
+        cleanUrl = cleanUrl.replace(':2096', ''); // Remove a porta esquisita (usa a 80)
+    }
+
+    if (cleanUrl.includes('://')) {
+        if (config?.useDirect !== false) {
+            const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
+            
+            // Envia o link limpo DIRETAMENTE para a TV (Zero Banda)
+            streams.push({ 
+                name: '🟢 ' + name, 
+                url: cleanUrl, 
+                title: titleStr, 
+                behaviorHints: { notWebReady: type === 'tv' }, 
+                contentType: type === 'tv' ? 'video/mp2t' : undefined 
+            });
+            directAdded = true;
+            console.log(`[STREAMS] Link limpo enviado para a TV: ${cleanUrl.substring(0, 50)}...`);
+        }
+    }
+                }
 
                     
                   
