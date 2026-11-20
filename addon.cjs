@@ -704,7 +704,7 @@ const addon = {
                     if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
                         cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
                     }  
-/*
+
                     if (cleanUrl.includes('://')) {
                         if (config?.useDirect !== false) {
                             const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
@@ -714,24 +714,8 @@ const addon = {
                             streams.push({ name: '🟢 ' + name, url: finalUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
                             directAdded = true;
                         }
-                    }  */
+                    }  
                   
-                  if (cleanUrl.includes('://')) {
-    if (config?.useDirect !== false) {
-        const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-        
-        // ✅ TESTE: Enviar o link direto para a TV, sem passar pelo META-SHIELD
-        streams.push({ 
-            name: '🟢 ' + name, 
-            url: cleanUrl, // <-- Link direto
-            title: titleStr, 
-            behaviorHints: { notWebReady: type === 'tv' }, 
-            contentType: type === 'tv' ? 'video/mp2t' : undefined 
-        });
-        directAdded = true;
-    }
-                  } 
-                    
                 } else {
                     console.warn(`[STREAMS WARNING] Nenhuma tentativa devolveu link válido para ${id}`);
                 }
@@ -740,24 +724,8 @@ const addon = {
             console.error(`[STREAM ERROR] Falha no processo de link Stalker para ${id}:`, e.message); 
         }
 
-        if (!directAdded) {
-    if (config?.useDirect !== false) {
-        let fallbackUrl = decodeURIComponent(sId).split('|||')[0].split('|')[0].replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
-        if (fallbackUrl.startsWith('http')) {
-            const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-            
-            // ✅ TESTE: Enviar o link direto
-            streams.push({ 
-                name: '🟢 ' + name, 
-                url: fallbackUrl, 
-                title: titleStr, 
-                behaviorHints: { notWebReady: type === 'tv' }, 
-                contentType: type === 'tv' ? 'video/mp2t' : undefined 
-            });
-        }
-    }
-        }
-/*
+        
+
         // ===== AQUI ESTÁ A CORREÇÃO =====
         if (!directAdded) {
             if (config?.useDirect !== false) {
@@ -777,7 +745,7 @@ const addon = {
                 }
             }
         }
-        // ==================================*/
+        // ==================================
     }
 
     const useProxy = config?.useProxy !== false;
