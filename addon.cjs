@@ -729,7 +729,7 @@ const addon = {
             console.log(`[STREAMS] Link limpo enviado para a TV: ${cleanUrl.substring(0, 50)}...`);
         }
     }
-                
+                }      
 
                     
                   
