@@ -704,7 +704,7 @@ const addon = {
                     if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
                         cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
                     }  
-/*
+
                     if (cleanUrl.includes('://')) {
                         if (config?.useDirect !== false) {
                             const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
@@ -714,38 +714,9 @@ const addon = {
                             streams.push({ name: '🟢 ' + name, url: finalUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
                             directAdded = true;
                         }
-                    }  */
+                    }  
 
-                    if (cleanUrl.includes('://')) {
-    if (config?.useDirect !== false) {
-        const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-        
-        // ✅ DETEÇÃO AUTOMÁTICA (sem listas):
-        // URL é https:// e tem porta explícita que NÃO é 443?
-        // → TVs Samsung rejeitam (certificado de cPanel, 443 fechada, etc.)
-        const portMatch = cleanUrl.match(/:(\d{2,5})\//);
-        const isHttpsNonStdPort = cleanUrl.startsWith('https://') && portMatch && portMatch[1] !== '443';
-        
-        if (type === 'tv' && isHttpsNonStdPort) {
-            console.log(`[STREAMS] HTTPS porta ${portMatch[1]} detetado → variantes HTTP sem META-SHIELD`);
-            const urlSamePort = cleanUrl.replace('https://', 'http://');
-            const url80     = cleanUrl.replace('https://', 'http://').replace(/:\d{2,5}\//, '/');
-            const url8080   = cleanUrl.replace('https://', 'http://').replace(/:\d{2,5}\//, ':8080/');
-            
-            streams.push({ name: '🟢 ' + name + ' [A]', url: urlSamePort, title: titleStr + ` (HTTP:${portMatch[1]})`, behaviorHints: { notWebReady: true }, contentType: 'video/mp2t' });
-            streams.push({ name: '🟢 ' + name + ' [B]', url: url80,       title: titleStr + ' (HTTP:80)',            behaviorHints: { notWebReady: true }, contentType: 'video/mp2t' });
-            streams.push({ name: '🟢 ' + name + ' [C]', url: url8080,     title: titleStr + ' (HTTP:8080)',          behaviorHints: { notWebReady: true }, contentType: 'video/mp2t' });
-            directAdded = true;
-        } else {
-            // Comportamento normal (mantém META-SHIELD para todos os outros servidores)
-            const finalUrl = (type === 'tv')
-                ? `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(realCmd)}?type=${type}`
-                : cleanUrl;
-            streams.push({ name: '🟢 ' + name, url: finalUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
-            directAdded = true;
-        }
-    }
-                    }
+                    
                   
                 } else {
                     console.warn(`[STREAMS WARNING] Nenhuma tentativa devolveu link válido para ${id}`);
@@ -756,7 +727,6 @@ const addon = {
         }
 
         
-/*
         // ===== AQUI ESTÁ A CORREÇÃO =====
         if (!directAdded) {
             if (config?.useDirect !== false) {
@@ -776,33 +746,7 @@ const addon = {
                 }
             }
         }
-        */
-        if (!directAdded) {
-    if (config?.useDirect !== false) {
-        let fallbackUrl = decodeURIComponent(sId).split('|||')[0].split('|')[0].replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
-        if (fallbackUrl.startsWith('http')) {
-            const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-            
-            const portMatch = fallbackUrl.match(/:(\d{2,5})\//);
-            const isHttpsNonStdPort = fallbackUrl.startsWith('https://') && portMatch && portMatch[1] !== '443';
-            const isLocalhost = fallbackUrl.includes('localhost') || fallbackUrl.includes('127.0.0.1');
-            
-            if (type === 'tv' && isHttpsNonStdPort) {
-                const urlSamePort = fallbackUrl.replace('https://', 'http://');
-                const url80     = fallbackUrl.replace('https://', 'http://').replace(/:\d{2,5}\//, '/');
-                const url8080   = fallbackUrl.replace('https://', 'http://').replace(/:\d{2,5}\//, ':8080/');
-                streams.push({ name: '🟢 ' + name + ' [A]', url: urlSamePort, title: titleStr + ' (Fallback A)', behaviorHints: { notWebReady: true }, contentType: 'video/mp2t' });
-                streams.push({ name: '🟢 ' + name + ' [B]', url: url80,       title: titleStr + ' (Fallback B)', behaviorHints: { notWebReady: true }, contentType: 'video/mp2t' });
-                streams.push({ name: '🟢 ' + name + ' [C]', url: url8080,     title: titleStr + ' (Fallback C)', behaviorHints: { notWebReady: true }, contentType: 'video/mp2t' });
-            } else if (type === 'tv' && isLocalhost) {
-                const finalUrl = `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(fallbackUrl)}?type=${type}`;
-                streams.push({ name: '🟢 ' + name, url: finalUrl, title: titleStr, behaviorHints: { notWebReady: true }, contentType: 'video/mp2t' });
-            } else {
-                streams.push({ name: '🟢 ' + name, url: fallbackUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
-            }
-        }
-    }
-        }
+        
     }
 
     const useProxy = config?.useProxy !== false;
