@@ -602,6 +602,152 @@ const addon = {
         return { meta };
     },
 
+   async getStreams(type, id, configBase64, host) {
+    console.log(`[STREAMS] Pedido de stream: type=${type}, id=${id}`);
+    if (type === "series") await new Promise(resolve => setTimeout(resolve, 800));
+
+    const parts = id.split(":"); 
+    const lIdxParts = parts[1].split("_");
+    const lIdx = parseInt(lIdxParts[0]);
+    const sig = lIdxParts[1];
+    const sId = parts[2];
+    const name = decodeURIComponent(parts[3] || "Stream");
+    const lists = this.parseConfig(configBase64); const config = lists[lIdx];
+    if (!config) return { streams: [] };
+    const expectedSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
+    if (sig && sig !== expectedSig) return { streams: [] };
+
+    const pUrl = `https://${host}/proxy/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(sId)}?type=${type}`;
+    let streams = [];
+    let directAdded = false;
+
+    if (config?.type === 'xtream') {
+        if (config?.useDirect !== false) {
+            const b = config.url.trim().replace(/\/$/, "");
+            if (type === 'tv') {
+                streams.push({ name: name, url: `${b}/${config.user}/${config.pass}/${sId}`, title: `📺 Directo TV`, behaviorHints: { notWebReady: true }, contentType: 'video/mp2t' });
+            } else if (type === 'movie') {
+                streams.push({ name: name, url: `${b}/movie/${config.user}/${config.pass}/${sId}`, title: `🎬 Directo Filme`, behaviorHints: { notWebReady: false } });
+            } else if (type === 'series') {
+                streams.push({ name: name, url: `${b}/series/${config.user}/${config.pass}/${sId}`, title: `🍿 Directo Série - ${name}`, behaviorHints: { notWebReady: false } });
+            }
+        }
+    } else if (config?.type === 'm3u') {
+        const url = decodeURIComponent(sId);
+        if (config?.useDirect !== false) {
+            streams.push({ name: name, url: url, title: '📺 Directo M3U', behaviorHints: { notWebReady: true }, contentType: 'video/mp2t' });
+            directAdded = true;
+        }
+    } else {
+        try {
+            let auth = await engine.authenticate(config, config.proxy);
+            if (auth) {
+                const decodedCmd = decodeURIComponent(sId);
+                let realCmd = decodedCmd;
+                let sNum = null;
+                if (decodedCmd.includes('|||')) {
+                    let partsCmd = decodedCmd.split('|||');
+                    realCmd = partsCmd[0];
+                    sNum = partsCmd[1];
+                } else if (decodedCmd.includes('|')) {
+                    let partsCmd = decodedCmd.split('|');
+                    realCmd = partsCmd[0];
+                    sNum = partsCmd[1];
+                }
+
+                const linkCacheKey = `${config.url}_${config.mac || ''}_${type}_${realCmd}_${sNum || ''}`;
+                let cmdUrl = null;
+
+                if (!global.pendingLinkRequests) global.pendingLinkRequests = {};
+
+                const cachedLink = global.streamLinkCache && global.streamLinkCache[linkCacheKey];
+                if (cachedLink && Date.now() - cachedLink.ts < 5000) {
+                    cmdUrl = cachedLink.url;
+                }
+                else if (global.pendingLinkRequests[linkCacheKey]) {
+                    try {
+                        cmdUrl = await global.pendingLinkRequests[linkCacheKey];
+                    } catch(e) { cmdUrl = null; }
+                }
+                else {
+                    console.log(`[LINK] A criar link para ${realCmd}...`);
+                    const promise = (async () => {
+                        let url = await engine.createStreamLink(auth, config, realCmd, type, sNum);
+                        if (!url || url.trim() === "") {
+                            const newAuth = await engine.authenticate(config, config.proxy);
+                            if (newAuth) url = await engine.createStreamLink(newAuth, config, realCmd, type, sNum);
+                        }
+                        return url;
+                    })();
+                    global.pendingLinkRequests[linkCacheKey] = promise;
+                    try {
+                        cmdUrl = await promise;
+                    } finally {
+                        delete global.pendingLinkRequests[linkCacheKey];
+                    }
+                    if (cmdUrl && typeof cmdUrl === 'string' && cmdUrl.trim() !== '') {
+                        if (!global.streamLinkCache) global.streamLinkCache = {};
+                        global.streamLinkCache[linkCacheKey] = { url: cmdUrl, ts: Date.now() };
+                        console.log(`[LINK] ✅ Link obtido para ${realCmd}`);
+                    }
+                }
+
+                if (typeof cmdUrl === 'string' && cmdUrl.trim() !== "") {
+                    console.log(`[STREAMS] URL obtido: ${cmdUrl}`);
+                    let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
+                    if (!cleanUrl.includes('.ts') && !cleanUrl.includes('.m3u8') && !cleanUrl.includes('.mp4')) {
+                        cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'format=ts';
+                    }  
+
+                    if (cleanUrl.includes('://')) {
+                        if (config?.useDirect !== false) {
+                            const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
+                            
+                            // ✅ REGRA AUTOMÁTICA (Sem listas de servidores)
+                            const isLocalhost = cleanUrl.includes('localhost') || cleanUrl.includes('127.0.0.1');
+                            const finalUrl = (type === 'tv' && isLocalhost)
+                                ? `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(realCmd)}?type=${type}`
+                                : cleanUrl;
+
+                            streams.push({ name: '🟢 ' + name, url: finalUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+                            directAdded = true;
+                        }
+                    }
+                }
+            }
+        } catch(e) { 
+            console.error(`[STREAM ERROR] Falha no processo de link Stalker para ${id}:`, e.message); 
+        }
+
+        if (!directAdded) {
+            if (config?.useDirect !== false) {
+                let fallbackUrl = decodeURIComponent(sId).split('|||')[0].split('|')[0].replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
+                if (fallbackUrl.startsWith('http')) {
+                    const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
+                    
+                    const isLocalhost = fallbackUrl.includes('localhost') || fallbackUrl.includes('127.0.0.1');
+                    const finalFallbackUrl = (type === 'tv' && isLocalhost)
+                        ? `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(fallbackUrl)}?type=${type}`
+                        : fallbackUrl;
+
+                    streams.push({ name: '🟢 ' + name, url: finalFallbackUrl, title: titleStr, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+                }
+            }
+        }
+    }
+
+    const useProxy = config?.useProxy !== false;
+    if (useProxy) {
+        const hint = config?.streamHint || '';
+        const proxyTitle = (hint ? hint + ' ' : '') + 
+                           (type === 'movie' ? '🎬 Proxy Estável' : (type === 'series' ? `🍿 Proxy Estável - ${name}` : '🔄 Proxy Estável'));
+        streams.push({ name: '🟢 ' + name, url: pUrl, title: proxyTitle, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+    }
+    return { streams };
+   } 
+
+    /*
+
                 async getStreams(type, id, configBase64, host) {
     console.log(`[STREAMS] Pedido de stream: type=${type}, id=${id}`);
     if (type === "series") await new Promise(resolve => setTimeout(resolve, 800));
@@ -762,6 +908,7 @@ const addon = {
     }
     return { streams };
                 }
+    */
     /*
 async getStreams(type, id, configBase64, host) {
     console.log(`[STREAMS] Pedido de stream: type=${type}, id=${id}`);
