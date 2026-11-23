@@ -212,7 +212,7 @@ const addon = {
             }
         }));
         const addonName = lists.map(l => l.name).filter(Boolean).join(" + ") || "XuloV Hub";
-        const m = { id: "org.xulov.stalker", version: "5.3.0", name: addonName, resources: ["catalog", "stream", "meta"], types: ["tv", "movie", "series"], idPrefixes: ["xlv:"], catalogs: catalogs };
+        const m = { id: "org.xulov.stalker", version: "5.3.0", name: addonName, resources: ["catalog", { name: "meta", types: ["tv", "movie", "series"], idPrefixes: ["xlv:"] }, { name: "stream", types: ["tv", "movie", "series"], idPrefixes: ["xlv:"] }], types: ["tv", "movie", "series"], idPrefixes: ["xlv:"], catalogs: catalogs };
         setCache(cacheKey, m, 60); 
         console.log("[MANIFEST] Manifest gerado com sucesso.");
         return m;
@@ -380,7 +380,9 @@ const addon = {
 
     async getMeta(type, id, configBase64) {
         console.log(`[META] Pedido: type=${type}, id=${id}`);
+        if (!id || id.indexOf("xlv:") !== 0) return { meta: {} };
         const parts = id.split(":");
+        if (!parts[1]) return { meta: {} };
         const lIdxParts = parts[1].split("_");
         const lIdx = parseInt(lIdxParts[0]);
         const sig = lIdxParts[1];
@@ -617,9 +619,11 @@ const addon = {
 
 async getStreams(type, id, configBase64, host) {
     console.log(`[STREAMS] Pedido de stream: type=${type}, id=${id}`);
+    if (!id || id.indexOf("xlv:") !== 0) return { streams: [] };
     if (type === "series") await new Promise(resolve => setTimeout(resolve, 800));
 
-    const parts = id.split(":"); 
+    const parts = id.split(":");
+    if (!parts[1]) return { streams: [] };
     const lIdxParts = parts[1].split("_");
     const lIdx = parseInt(lIdxParts[0]);
     const sig = lIdxParts[1];
