@@ -18,6 +18,19 @@ function setCache(key, data, ttlMinutes = 30) {
     memCache[key] = { data, expire: Date.now() + (ttlMinutes * 60 * 1000) };
 }
 
+// Bilhete curto. A TV abre /live/<id> e recebe um 302 para o portal.
+function mintDirectTicket(data) {
+    if (!global.directTickets) global.directTickets = new Map();
+    const ticket = crypto.randomBytes(12).toString('hex');
+    global.directTickets.set(ticket, {
+        ...data,
+        exp: Date.now() + 10 * 60 * 1000,
+        url: null,
+        pending: null
+    });
+    return ticket;
+}
+
 function cleanTitle(title) {
     return title.replace(/\[.*?\]/g, '').replace(/\(.*\)/g, '').replace(/(S\d+|T\d+).*/i, '').replace(/(1080p|720p|4k|uhd|hdtv|x264|x265|hevc|dual|latino|legendado|multi|v1|v2)/gi, '').trim();
 }
@@ -617,34 +630,59 @@ async getStreams(type, id, configBase64, host) {
     const expectedSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
     if (sig && sig !== expectedSig) return { streams: [] };
 
-    // URL CURTA PARA A TV (Evita o corte de 2-8KB do Tizen)
-    const shortId = Buffer.from(`${lIdx}_${sId}`).toString('base64url');
-    const pUrl = `https://${host}/proxy/${shortId}?type=${type}`;
-    
+    const pUrl = `https://${host}/proxy/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(sId)}?type=${type}`;
     let streams = [];
     let directAdded = false;
 
     if (config?.type === 'xtream') {
-        // ... (código xtream mantém-se igual, mas sem notWebReady: true)
+        if (config?.useDirect !== false) {
+            const b = config.url.trim().replace(/\/$/, "");
+            if (type === 'tv') {
+                const raw = `${b}/${config.user}/${config.pass}/${sId}`;
+                const ticket = mintDirectTicket({ kind: 'url', direct: raw, config });
+                streams.push({ name: name, url: `https://${host}/live/${ticket}`, title: `📺 Directo TV`, behaviorHints: { notWebReady: true } });
+                directAdded = true;
+            } else if (type === 'movie') {
+                streams.push({ name: name, url: `${b}/movie/${config.user}/${config.pass}/${sId}`, title: `🎬 Directo Filme`, behaviorHints: { notWebReady: false } });
+            } else if (type === 'series') {
+                streams.push({ name: name, url: `${b}/series/${config.user}/${config.pass}/${sId}`, title: `🍿 Directo Série - ${name}`, behaviorHints: { notWebReady: false } });
+            }
+        }
     } else if (config?.type === 'm3u') {
-        // ...
+        const url = decodeURIComponent(sId);
+        if (config?.useDirect !== false) {
+            const ticket = mintDirectTicket({ kind: 'url', direct: url, config });
+            streams.push({ name: name, url: `https://${host}/live/${ticket}`, title: '📺 Directo M3U', behaviorHints: { notWebReady: true } });
+            directAdded = true;
+        }
     } else {
         try {
+            const decodedCmd = decodeURIComponent(sId);
+            let realCmd = decodedCmd;
+            let sNum = null;
+            if (decodedCmd.includes('|||')) {
+                const partsCmd = decodedCmd.split('|||');
+                realCmd = partsCmd[0];
+                sNum = partsCmd[1];
+            } else if (decodedCmd.includes('|')) {
+                const partsCmd = decodedCmd.split('|');
+                realCmd = partsCmd[0];
+                sNum = partsCmd[1];
+            }
+
+            // TV: o create_link só acontece quando a TV pede a playlist.
+            if (type === 'tv' && config?.useDirect !== false) {
+                const ticket = mintDirectTicket({ kind: 'stalker', config, cmd: realCmd, type: 'tv', sNum: null });
+                streams.push({
+                    name: '🟢 ' + name,
+                    title: '⚡ Directo TV',
+                    url: `https://${host}/live/${ticket}`,
+                    behaviorHints: { notWebReady: true }
+                });
+                directAdded = true;
+            } else if (config?.useDirect !== false) {
             let auth = await engine.authenticate(config, config.proxy);
             if (auth) {
-                const decodedCmd = decodeURIComponent(sId);
-                let realCmd = decodedCmd;
-                let sNum = null;
-                if (decodedCmd.includes('|||')) {
-                    let partsCmd = decodedCmd.split('|||');
-                    realCmd = partsCmd[0];
-                    sNum = partsCmd[1];
-                } else if (decodedCmd.includes('|')) {
-                    let partsCmd = decodedCmd.split('|');
-                    realCmd = partsCmd[0];
-                    sNum = partsCmd[1];
-                }
-
                 const linkCacheKey = `${config.url}_${config.mac || ''}_${type}_${realCmd}_${sNum || ''}`;
                 let cmdUrl = null;
 
@@ -653,16 +691,21 @@ async getStreams(type, id, configBase64, host) {
                 const cachedLink = global.streamLinkCache && global.streamLinkCache[linkCacheKey];
                 if (cachedLink && Date.now() - cachedLink.ts < 5000) {
                     cmdUrl = cachedLink.url;
+                    console.log(`[LINK CACHE] Reutilizado para ${realCmd} (${Math.round((Date.now()-cachedLink.ts))}ms)`);
                 }
                 else if (global.pendingLinkRequests[linkCacheKey]) {
+                    console.log(`[LINK PENDING] A aguardar pedido em curso para ${realCmd}`);
                     try {
                         cmdUrl = await global.pendingLinkRequests[linkCacheKey];
                     } catch(e) { cmdUrl = null; }
                 }
                 else {
+                    console.log(`[LINK] A criar link para ${realCmd}...`);
                     const promise = (async () => {
                         let url = await engine.createStreamLink(auth, config, realCmd, type, sNum);
                         if (!url || url.trim() === "") {
+                            console.log(`[LINK] 1ª tentativa falhou. A limpar token e a repetir...`);
+                            engine.invalidateAuth(config);
                             const newAuth = await engine.authenticate(config, config.proxy);
                             if (newAuth) url = await engine.createStreamLink(newAuth, config, realCmd, type, sNum);
                         }
@@ -677,49 +720,46 @@ async getStreams(type, id, configBase64, host) {
                     if (cmdUrl && typeof cmdUrl === 'string' && cmdUrl.trim() !== '') {
                         if (!global.streamLinkCache) global.streamLinkCache = {};
                         global.streamLinkCache[linkCacheKey] = { url: cmdUrl, ts: Date.now() };
+                        console.log(`[LINK] ✅ Link obtido para ${realCmd}`);
                     }
                 }
 
                 if (typeof cmdUrl === 'string' && cmdUrl.trim() !== "") {
                     console.log(`[STREAMS] URL obtido: ${cmdUrl}`);
-                    // ✅ NÃO ADICIONAR format=ts (O erro nº 1 apontado na análise)
-                    let cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
-
+                    const cleanUrl = cmdUrl.replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
                     if (cleanUrl.includes('://')) {
-                        if (config?.useDirect !== false) {
-                            const titleStr = type === 'movie' ? '🎬 Directo Filme' : (type === 'series' ? `🍿 Directo Série - ${name}` : '⚡ Directo TV');
-                            const isLocalhost = cleanUrl.includes('localhost') || cleanUrl.includes('127.0.0.1');
-                            
-                            // ✅ SE FOR TV E LINK EXTERNO: Vai DIRETO
-                            const finalUrl = (type === 'tv' && isLocalhost)
-                                ? `https://${host}/meta/${encodeURIComponent(configBase64)}/${lIdx}/${encodeURIComponent(realCmd)}?type=${type}`
-                                : cleanUrl;
-
-                            // ✅ A CORREÇÃO DO notWebReady: false para TV
-                            streams.push({ 
-                                name: '🟢 ' + name, 
-                                url: finalUrl, 
-                                title: titleStr, 
-                                behaviorHints: { notWebReady: false }, // <-- O SEGREDO PARA A TV FUNCIONAR
-                                contentType: type === 'tv' ? 'video/mp2t' : undefined 
-                            });
-                            directAdded = true;
-                        }
+                        const titleStr = type === 'movie' ? '🎬 Directo Filme' : `🍿 Directo Série - ${name}`;
+                        streams.push({ name: '🟢 ' + name, url: cleanUrl, title: titleStr, behaviorHints: { notWebReady: false } });
+                        directAdded = true;
                     }
+                } else {
+                    console.warn(`[STREAMS WARNING] Nenhuma tentativa devolveu link válido para ${id}`);
                 }
             }
-        } catch(e) { 
-            console.error(`[STREAM ERROR] Falha no processo de link Stalker para ${id}:`, e.message); 
+            }
+        } catch(e) {
+            console.error(`[STREAM ERROR] Falha no processo de link Stalker para ${id}:`, e.message);
+        }
+
+        if (!directAdded && type !== 'tv' && config?.useDirect !== false) {
+            let fallbackUrl = decodeURIComponent(sId).split('|||')[0].split('|')[0].replace(/^(ffrt|ffmpeg|ffrt2|rtmp)\s+/, "").trim();
+            if (fallbackUrl.startsWith('http')) {
+                const titleStr = type === 'movie' ? '🎬 Directo Filme' : `🍿 Directo Série - ${name}`;
+                streams.push({ name: '🟢 ' + name, url: fallbackUrl, title: titleStr, behaviorHints: { notWebReady: false } });
+            }
         }
     }
 
     const useProxy = config?.useProxy !== false;
-    if (useProxy) {
-        // O Proxy também tem de ir com notWebReady: false!
-        streams.push({ name: '🟢 ' + name, url: pUrl, title: `🔄 Proxy`, behaviorHints: { notWebReady: false }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
+    // TV com Directo não leva o relay: senão a app, ao falhar, abre o /proxy e gasta a banda.
+    if (useProxy && !(type === 'tv' && directAdded)) {
+        const hint = config?.streamHint || '';
+        const proxyTitle = (hint ? hint + ' ' : '') + 
+                           (type === 'movie' ? '🎬 Proxy Estável' : (type === 'series' ? `🍿 Proxy Estável - ${name}` : '🔄 Proxy Estável'));
+        streams.push({ name: '🟢 ' + name, url: pUrl, title: proxyTitle, behaviorHints: { notWebReady: type === 'tv' }, contentType: type === 'tv' ? 'video/mp2t' : undefined });
     }
     return { streams };
-  }
+    }
 };
 
 module.exports = addon;
