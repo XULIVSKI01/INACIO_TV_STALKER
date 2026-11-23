@@ -224,32 +224,64 @@ app.get('/live/:ticket', async (req, res) => {
     }
     t.exp = Date.now() + 6 * 60 * 60 * 1000;
     try {
-        const url = await resolveDirectTicket(t);
-        if (!url) {
-            console.error(`[DIRECT] Sem URL para ${ticket}`);
-            return res.status(502).type('text/plain').send('nolink');
-        }
         if (req.method === 'HEAD') {
-            console.log(`[DIRECT] ${ticket} HEAD (sonda, sem abrir o portal)`);
+            console.log(`[DIRECT] ${ticket} HEAD (sonda, sem create_link)`);
             res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Content-Length': '0', 'Cache-Control': 'no-store' });
             return res.end();
         }
+
+        // LG / VLC: um único pedido. Renova o play_token se o anterior já tiver >45s.
         if (isLiveSingleFetch(req)) {
-            console.log(`[DIRECT] ${ticket} 302 direto (${(req.headers['user-agent'] || '').slice(0, 40)}) → ${url.substring(0, 80)}`);
+            if (t.redirectedAt && Date.now() - t.redirectedAt > 45000) {
+                t.url = null;
+            }
+            const url = await resolveDirectTicket(t);
+            if (!url) {
+                console.error(`[DIRECT] Sem URL para ${ticket}`);
+                return res.status(502).type('text/plain').send('nolink');
+            }
+            t.redirected = true;
+            t.redirectedAt = Date.now();
+            console.log(`[DIRECT] ${ticket} 302 único → ${url.substring(0, 90)}`);
             return directRedirect(res, url);
         }
+
+        // Samsung / leitores com 2 pedidos: 1ª = sonda SEM gastar play_token
         if (!t.probed) {
             t.probed = true;
-            console.log(`[DIRECT] ${ticket} 1ª sonda, link guardado`);
+            console.log(`[DIRECT] ${ticket} 1ª sonda (ainda sem create_link)`);
             return directProbe(res);
         }
+
+        // 2º pedido = play: create_link agora e 302 já a seguir (token ainda fresco)
         if (!t.redirected) {
+            const url = await resolveDirectTicket(t);
+            if (!url) {
+                console.error(`[DIRECT] Sem URL para ${ticket}`);
+                return res.status(502).type('text/plain').send('nolink');
+            }
             t.redirected = true;
-            console.log(`[DIRECT] ${ticket} 302 play → ${url.substring(0, 80)}`);
+            t.redirectedAt = Date.now();
+            console.log(`[DIRECT] ${ticket} 302 play → ${url.substring(0, 90)}`);
             return directRedirect(res, url);
         }
-        console.log(`[DIRECT] ${ticket} sonda extra, não abre segunda ligação`);
-        return directProbe(res);
+
+        // Já redirecionou. Pedidos cedo = sonda (não abrir 2ª ligação e matar a actual).
+        // Pedidos depois de ~45s = o play_token provavelmente expirou → renovar.
+        const age = t.redirectedAt ? Date.now() - t.redirectedAt : 0;
+        if (age < 45000) {
+            console.log(`[DIRECT] ${ticket} sonda extra (${Math.round(age / 1000)}s, mantém ligação actual)`);
+            return directProbe(res);
+        }
+        t.url = null;
+        const url = await resolveDirectTicket(t);
+        if (!url) {
+            console.error(`[DIRECT] Renovação falhou para ${ticket}`);
+            return res.status(502).type('text/plain').send('nolink');
+        }
+        t.redirectedAt = Date.now();
+        console.log(`[DIRECT] ${ticket} 302 renovado (${Math.round(age / 1000)}s) → ${url.substring(0, 90)}`);
+        return directRedirect(res, url);
     } catch (e) {
         console.error(`[DIRECT] ${e.message}`);
         if (!res.headersSent) res.status(502).type('text/plain').send('error');
