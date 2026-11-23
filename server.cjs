@@ -1,4 +1,4 @@
-// server.cjs – Proxy Stalker universal (integrado com stalkerengine)
+/// server.cjs – Proxy Stalker universal (integrado com stalkerengine)
 const express = require("express");
 const cors = require("cors");
 const axios = require("axios");
