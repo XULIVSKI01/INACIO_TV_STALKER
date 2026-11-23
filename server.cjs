@@ -131,6 +131,140 @@ app.get("/ping", (req, res) => {
     res.status(200).send("pong");
 });
 
+// Directo TV: a TV recebe um 302 para o URL do portal e fica lá.
+// Não se devolve playlist — um .m3u8 faz a TV fechar o direto aos 20–50 s.
+function normalizePlayUrl(url, portalUrl) {
+    if (!url || typeof url !== 'string') return null;
+    url = url.trim().replace(/^['"`]?(ffrt\d*|ffmpeg|rtmp)['"`]?\s+/i, '').trim();
+    url = url.replace(/[\s\t\r\n]+/g, '');
+    if (!/^https?:\/\//i.test(url)) return null;
+    try {
+        const u = new URL(url);
+        if ((u.hostname === 'localhost' || u.hostname === '127.0.0.1') && portalUrl) {
+            const base = /^https?:\/\//i.test(portalUrl) ? portalUrl : `http://${portalUrl}`;
+            const p = new URL(base);
+            u.hostname = p.hostname;
+            if (p.port) u.port = p.port;
+            url = u.toString();
+        }
+    } catch (e) {
+        return null;
+    }
+    return url;
+}
+
+function isLiveSingleFetch(req) {
+    const ua = req.headers['user-agent'] || '';
+    return /web0s|webos|netcast|lge|lg browser|vlc|mpv|lavf|libmpv/i.test(ua);
+}
+
+function directProbe(res) {
+    const fakeTs = Buffer.alloc(188, 0);
+    fakeTs[0] = 0x47;
+    res.writeHead(200, {
+        'Content-Type': 'video/mp2t',
+        'Content-Length': fakeTs.length,
+        'Connection': 'close',
+        'Cache-Control': 'no-store',
+        'Access-Control-Allow-Origin': '*'
+    });
+    res.end(fakeTs);
+}
+
+function directRedirect(res, url) {
+    res.writeHead(302, {
+        Location: url,
+        'Cache-Control': 'no-store',
+        'Access-Control-Allow-Origin': '*',
+        Connection: 'close'
+    });
+    res.end();
+}
+
+async function buildDirectUrl(t) {
+    let raw = null;
+    if (t.kind === 'url') {
+        raw = t.direct;
+    } else {
+        const cleaned = String(t.cmd || '').trim().replace(/^['"`]?(ffrt\d*|ffmpeg|rtmp)['"`]?\s+/i, '').trim();
+        const alreadyFinal = /^https?:\/\//i.test(cleaned) && !/localhost|127\.0\.0\.1/i.test(cleaned);
+        if (alreadyFinal) {
+            raw = cleaned;
+        } else {
+            let auth = await engine.authenticate(t.config, t.config.proxy);
+            if (auth) raw = await engine.createStreamLink(auth, t.config, t.cmd, t.type || 'tv', t.sNum || null);
+            if (!raw) {
+                engine.invalidateAuth(t.config);
+                auth = await engine.authenticate(t.config, t.config.proxy);
+                if (auth) raw = await engine.createStreamLink(auth, t.config, t.cmd, t.type || 'tv', t.sNum || null);
+            }
+        }
+    }
+    const url = normalizePlayUrl(raw, t.config && t.config.url);
+    if (url) t.url = url;
+    return url;
+}
+
+function resolveDirectTicket(t) {
+    if (t.url) return Promise.resolve(t.url);
+    if (!t.pending) {
+        t.pending = buildDirectUrl(t).finally(() => { t.pending = null; });
+    }
+    return t.pending;
+}
+
+app.get('/live/:ticket', async (req, res) => {
+    let ticket = req.params.ticket || '';
+    ticket = ticket.replace(/\.(m3u8|ts)$/i, '');
+    const table = global.directTickets;
+    const t = table && table.get(ticket);
+    if (!t || t.exp < Date.now()) {
+        if (table) table.delete(ticket);
+        return res.status(404).type('text/plain').send('expired');
+    }
+    t.exp = Date.now() + 6 * 60 * 60 * 1000;
+    try {
+        const url = await resolveDirectTicket(t);
+        if (!url) {
+            console.error(`[DIRECT] Sem URL para ${ticket}`);
+            return res.status(502).type('text/plain').send('nolink');
+        }
+        if (req.method === 'HEAD') {
+            console.log(`[DIRECT] ${ticket} HEAD (sonda, sem abrir o portal)`);
+            res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Content-Length': '0', 'Cache-Control': 'no-store' });
+            return res.end();
+        }
+        if (isLiveSingleFetch(req)) {
+            console.log(`[DIRECT] ${ticket} 302 direto (${(req.headers['user-agent'] || '').slice(0, 40)}) → ${url.substring(0, 80)}`);
+            return directRedirect(res, url);
+        }
+        if (!t.probed) {
+            t.probed = true;
+            console.log(`[DIRECT] ${ticket} 1ª sonda, link guardado`);
+            return directProbe(res);
+        }
+        if (!t.redirected) {
+            t.redirected = true;
+            console.log(`[DIRECT] ${ticket} 302 play → ${url.substring(0, 80)}`);
+            return directRedirect(res, url);
+        }
+        console.log(`[DIRECT] ${ticket} sonda extra, não abre segunda ligação`);
+        return directProbe(res);
+    } catch (e) {
+        console.error(`[DIRECT] ${e.message}`);
+        if (!res.headersSent) res.status(502).type('text/plain').send('error');
+    }
+});
+
+setInterval(() => {
+    if (!global.directTickets) return;
+    const now = Date.now();
+    for (const [k, t] of global.directTickets) {
+        if (!t || t.exp < now) global.directTickets.delete(k);
+    }
+}, 60000);
+
+
 // Página de Configuração (inalterada)
 app.get("/", (req, res) => res.redirect("/configure"));
 app.get("/configure", (req, res) => {
@@ -500,7 +634,9 @@ function updateMasterCheckbox(groupId) {
 });
 
 // Rotas do Stremio
-// ===== METADATA SHIELD (CLEAN REDIRECT) =====
+// Este é o META ONDE PARECE FUNCIONA TUDO MAS SO FICOU A DUVIDA
+//NO SERVIDOR 200.WF. Vou testar uns dias e ver se realmente funciona.
+// ===== METADATA SHIELD: responde ao metadata probe do Tizen sem tocar no portal =====
 app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
     const { config, listIdx, channelId } = req.params;
     const type = req.query.type || 'tv';
@@ -512,50 +648,107 @@ app.get("/meta/:config/:listIdx/:channelId", async (req, res) => {
     if (!global.metaShield) global.metaShield = {};
     const now = Date.now();
 
+    // ===== DETEÇÃO DE PLATAFORMA =====
+    const ua = (req.headers['user-agent'] || '').toLowerCase();
+    const isDefinitelyNonTizen = /vlc|mpv/i.test(ua);
+
+    // Helper: obtém URL real (sem chamar create_link se o cmd já for URL final)
     const resolveRealUrl = async () => {
         const stalkerCmd = decodeURIComponent(channelId);
         const cleanCmd = stalkerCmd.replace(/^['"`]?(ffrt|ffmpeg|ffrt2|rtmp)['"`]?\s+/i, "").trim();
 
-        if ((cleanCmd.startsWith('http://') || cleanCmd.startsWith('https://')) && !cleanCmd.includes('localhost') && !cleanCmd.includes('127.0.0.1')) {
+        // Se já é URL final e não é localhost → usar directamente
+        if ((cleanCmd.startsWith('http://') || cleanCmd.startsWith('https://'))
+            && !cleanCmd.includes('localhost') && !cleanCmd.includes('127.0.0.1')) {
+            console.log(`[META-SHIELD] Cmd já é URL final — sem create_link`);
             return cleanCmd;
         }
 
+        // Caso contrário → create_link normal
         const auth = await engine.authenticate(configData, configData.proxy);
         if (!auth) return null;
         const linkUrl = `${auth.api}type=itv&action=create_link&cmd=${encodeURIComponent(stalkerCmd)}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
         const linkRes = await axios.get(linkUrl, engine.getAxiosOpts(configData, { headers: auth.authData.headers, timeout: 5000 }));
-        return extractUrlFix(linkRes.data?.js);
+        const streamUrl = extractUrlFix(linkRes.data?.js);
+        return streamUrl && streamUrl.trim() ? streamUrl.trim() : null;
     };
 
-    // Se a TV fizer um HEAD (sonda), responde OK e termina, sem enviar bytes falsos
-    if (req.method === 'HEAD') {
-        res.writeHead(200, { 'Content-Type': 'video/mp2t' });
-        return res.end();
-    }
-
-    // Se já temos o link guardado, redireciona logo (Zero Banda)
-    if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
-        if (global.metaShield[key + '_real']) {
+    if (isDefinitelyNonTizen) {
+        console.log(`[META-SHIELD] VLC/MPV detectado → redirect direct`);
+        if (global.metaShield[key + '_real'] && now - global.metaShield[key] < 60000) {
             return res.redirect(302, global.metaShield[key + '_real']);
         }
+        try {
+            const url = await resolveRealUrl();
+            if (url) {
+                global.metaShield[key] = now;
+                global.metaShield[key + '_real'] = url;
+                console.log(`[META-SHIELD] Direct: ${url.substring(0, 60)}...`);
+                return res.redirect(302, url);
+            }
+        } catch(e) {
+            console.error(`[META-SHIELD] Erro direct: ${e.message}`);
+        }
+        return res.status(500).end();
     }
 
-    // 1º pedido GET
+    // Se já redirecionámos 1 vez → fake TS para o Tizen desistir
+    if (global.metaShield[key] && now - global.metaShield[key] < 60000) {
+        const redirectCount = global.metaShield[key + '_redirects'] || 0;
+        const realUrl = global.metaShield[key + '_real'];
+
+        if (redirectCount < 1 && realUrl) {
+            global.metaShield[key + '_redirects'] = redirectCount + 1;
+            console.log(`[META-SHIELD] Redirecionar #${redirectCount + 1} → portal`);
+            return res.redirect(302, realUrl);
+        }
+
+        console.log(`[META-SHIELD] Tizen insistiu (${redirectCount + 1}º) → fake TS`);
+        const fakeTs = Buffer.alloc(188, 0);
+        fakeTs[0] = 0x47;
+        res.writeHead(200, {
+            'Content-Type': 'video/mp2t',
+            'Content-Length': fakeTs.length,
+            'Connection': 'close'
+        });
+        return res.end(fakeTs);
+    }
+
+    // 1º pedido = metadata
     global.metaShield[key] = now;
+    console.log(`[META-SHIELD] 1º pedido (metadata) → a responder localmente`);
+
     try {
         const url = await resolveRealUrl();
         if (url) {
             global.metaShield[key + '_real'] = url;
-            console.log(`[META-SHIELD] URL obtida -> Redirect DIRETO para a TV: ${url.substring(0, 50)}...`);
-            // Envia o Redirect diretamente sem fake TS!
-            return res.redirect(302, url);
+            console.log(`[META-SHIELD] URL real guardado: ${url.substring(0, 70)}...`);
         }
     } catch(e) {
-        console.error(`[META-SHIELD] Erro: ${e.message}`);
+        console.error(`[META-SHIELD] Erro ao criar link: ${e.message}`);
     }
 
-    return res.status(500).end();
-});
+    const fakeTs = Buffer.alloc(188, 0);
+    fakeTs[0] = 0x47;
+    res.writeHead(200, {
+        'Content-Type': 'video/mp2t',
+        'Content-Length': fakeTs.length,
+        'Connection': 'close'
+    });
+    res.end(fakeTs);
+ });
+// Limpeza do metaShield a cada minuto
+setInterval(() => {
+    if (!global.metaShield) return;
+    const now = Date.now();
+    Object.keys(global.metaShield).forEach(k => {
+        if (typeof global.metaShield[k] === 'number' && now - global.metaShield[k] > 120000) {
+            delete global.metaShield[k];
+            delete global.metaShield[k + '_real'];
+            delete global.metaShield[k + '_redirects'];
+        }
+    });
+}, 60000);
             
 
 /*
