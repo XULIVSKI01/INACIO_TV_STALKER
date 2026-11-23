@@ -100,6 +100,10 @@ setInterval(async () => {
 const PORT = process.env.PORT || 7860;
 const app = express();
 
+process.on("unhandledRejection", (err) => {
+    console.error("[UNHANDLED]", err && err.stack ? err.stack : err);
+});
+
 app.use(cors());
 app.use(express.json());
 app.use((req, res, next) => {
@@ -213,6 +217,73 @@ function resolveDirectTicket(t) {
     return t.pending;
 }
 
+// Enquanto o canal toca, a box MAG chama watchdog com cur_play_type=1
+// antes do watchdog_timeout. Sem isto o portal corta o play_token (~60s).
+// Não faz create_link: um token novo mata o que está a tocar.
+function startPlayWatch(t) {
+    if (!t || t.kind === 'url' || !t.config || t.config.type === 'm3u' || t.config.type === 'xtream') return;
+    if (t.watchTimer || t.watchStarting) return;
+    t.watchStarting = true;
+    console.log(`[DIRECT] watchdog a iniciar ${t.config.url || ''}`);
+
+    const macKey = String(t.config.mac || '') + '|' + String(t.config.url || '');
+    if (!global.playWatchers) global.playWatchers = new Map();
+    const prev = global.playWatchers.get(macKey);
+    if (prev && prev !== t && prev.watchTimer) {
+        clearInterval(prev.watchTimer);
+        prev.watchTimer = null;
+    }
+    global.playWatchers.set(macKey, t);
+
+    const beat = async () => {
+        if (t.watchBusy) return;
+        if (!t.redirectedAt || t.exp < Date.now() || global.playWatchers.get(macKey) !== t) {
+            if (t.watchTimer) { clearInterval(t.watchTimer); t.watchTimer = null; }
+            return;
+        }
+        t.watchBusy = true;
+        try {
+            const auth = await engine.authenticate(t.config, t.config.proxy);
+            if (!auth) return;
+            const opts = engine.getAxiosOpts(t.config, { headers: auth.authData.headers, timeout: 4000 });
+            const q = `type=watchdog&action=get_events&init=0&cur_play_type=1&event_active_id=0&buffering_err=0&need_quality=0&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+            const res = await axios.get(`${auth.api}${q}`, opts);
+            const newToken = res.data?.js?.token;
+            if (newToken && newToken !== auth.token && auth.authData && auth.authData.headers) {
+                auth.token = newToken;
+                auth.authData.headers.Authorization = `Bearer ${newToken}`;
+                const c = auth.authData.headers.Cookie || '';
+                auth.authData.headers.Cookie = c
+                    .replace(/token=[^;]*/, `token=${newToken}`)
+                    .replace(/access_token=[^;]*/, `access_token=${newToken}`);
+            }
+            console.log(`[DIRECT] watchdog ok cur_play_type=1`);
+        } catch (e) {
+            console.warn(`[DIRECT] watchdog falhou: ${e.message}`);
+        } finally {
+            t.watchBusy = false;
+        }
+    };
+
+    (async () => {
+        let every = 20000;
+        try {
+            const auth = await engine.authenticate(t.config, t.config.proxy);
+            if (auth) {
+                const opts = engine.getAxiosOpts(t.config, { headers: auth.authData.headers, timeout: 4000 });
+                const res = await axios.get(`${auth.api}type=stb&action=get_profile&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, opts);
+                const wd = parseInt(res.data?.js?.watchdog_timeout, 10);
+                if (wd >= 30 && wd <= 300) every = Math.max(15000, Math.floor((wd * 1000) / 3));
+                console.log(`[DIRECT] watchdog_timeout=${wd || '?'}s, heartbeat ${Math.round(every / 1000)}s`);
+            }
+        } catch (e) {}
+        if (t.exp < Date.now() || global.playWatchers.get(macKey) !== t) return;
+        if (t.watchTimer) clearInterval(t.watchTimer);
+        t.watchTimer = setInterval(beat, every);
+        beat();
+    })();
+}
+
 app.get('/live/:ticket', async (req, res) => {
     let ticket = req.params.ticket || '';
     ticket = ticket.replace(/\.(m3u8|ts)$/i, '');
@@ -225,24 +296,24 @@ app.get('/live/:ticket', async (req, res) => {
     t.exp = Date.now() + 6 * 60 * 60 * 1000;
     try {
         if (req.method === 'HEAD') {
-            console.log(`[DIRECT] ${ticket} HEAD (sonda, sem create_link)`);
-            res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Content-Length': '0', 'Cache-Control': 'no-store' });
+            console.log(`[DIRECT] ${ticket} HEAD`);
+            res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Cache-Control': 'no-store', 'Connection': 'close' });
             return res.end();
         }
 
         // LG / VLC: um único pedido. Renova o play_token se o anterior já tiver >45s.
         if (isLiveSingleFetch(req)) {
-            if (t.redirectedAt && Date.now() - t.redirectedAt > 45000) {
-                t.url = null;
-            }
+            const age = t.redirectedAt ? Date.now() - t.redirectedAt : Infinity;
+            if (!(t.url && age < 45000)) t.url = null;
             const url = await resolveDirectTicket(t);
             if (!url) {
                 console.error(`[DIRECT] Sem URL para ${ticket}`);
                 return res.status(502).type('text/plain').send('nolink');
             }
             t.redirected = true;
-            t.redirectedAt = Date.now();
+            if (!(age < 45000)) t.redirectedAt = Date.now();
             console.log(`[DIRECT] ${ticket} 302 único → ${url.substring(0, 90)}`);
+            startPlayWatch(t);
             return directRedirect(res, url);
         }
 
@@ -263,15 +334,16 @@ app.get('/live/:ticket', async (req, res) => {
             t.redirected = true;
             t.redirectedAt = Date.now();
             console.log(`[DIRECT] ${ticket} 302 play → ${url.substring(0, 90)}`);
+            startPlayWatch(t);
             return directRedirect(res, url);
         }
 
-        // Já redirecionou. Pedidos cedo = sonda (não abrir 2ª ligação e matar a actual).
-        // Pedidos depois de ~45s = o play_token provavelmente expirou → renovar.
+        // O player volta a pedir /live poucos segundos depois. Um TS falso de 188 bytes
+        // faz a app tratar o canal como acabado (~10s). O mesmo play_token, sem create_link.
         const age = t.redirectedAt ? Date.now() - t.redirectedAt : 0;
-        if (age < 45000) {
-            console.log(`[DIRECT] ${ticket} sonda extra (${Math.round(age / 1000)}s, mantém ligação actual)`);
-            return directProbe(res);
+        if (t.url && age < 45000) {
+            console.log(`[DIRECT] ${ticket} 302 mesmo token (${Math.round(age / 1000)}s)`);
+            return directRedirect(res, t.url);
         }
         t.url = null;
         const url = await resolveDirectTicket(t);
@@ -281,6 +353,7 @@ app.get('/live/:ticket', async (req, res) => {
         }
         t.redirectedAt = Date.now();
         console.log(`[DIRECT] ${ticket} 302 renovado (${Math.round(age / 1000)}s) → ${url.substring(0, 90)}`);
+        startPlayWatch(t);
         return directRedirect(res, url);
     } catch (e) {
         console.error(`[DIRECT] ${e.message}`);
@@ -292,7 +365,10 @@ setInterval(() => {
     if (!global.directTickets) return;
     const now = Date.now();
     for (const [k, t] of global.directTickets) {
-        if (!t || t.exp < now) global.directTickets.delete(k);
+        if (!t || t.exp < now) {
+            if (t && t.watchTimer) clearInterval(t.watchTimer);
+            global.directTickets.delete(k);
+        }
     }
 }, 60000);
 
@@ -904,26 +980,48 @@ setInterval(() => {
 }, 60000);
 */
 app.get("/:config/manifest.json", async (req, res) => {
-    rememberConfig(req.params.config);
-    res.json(await addon.getManifest(req.params.config));
+    try {
+        rememberConfig(req.params.config);
+        res.json(await addon.getManifest(req.params.config));
+    } catch (e) {
+        console.error("[MANIFEST ERROR]", e.message);
+        if (!res.headersSent) res.status(500).json({ error: "manifest" });
+    }
 });
 app.get("/:config/catalog/:type/:id/:extra?.json", async (req, res) => {
-    rememberConfig(req.params.config);
-    const { config, type, id, extra } = req.params;
-    let extraObj = {};
-    if (extra) {
-        extra.replace(".json", "").split("&").forEach(p => {
-            const [k, v] = p.split("=");
-            if (k && v) extraObj[k] = decodeURIComponent(v);
-        });
+    try {
+        rememberConfig(req.params.config);
+        const { config, type, id, extra } = req.params;
+        let extraObj = {};
+        if (extra) {
+            extra.replace(".json", "").split("&").forEach(p => {
+                const [k, v] = p.split("=");
+                if (k && v) extraObj[k] = decodeURIComponent(v);
+            });
+        }
+        res.json(await addon.getCatalog(type, id, extraObj, config));
+    } catch (e) {
+        console.error("[CATALOG ERROR]", e.message);
+        if (!res.headersSent) res.json({ metas: [] });
     }
-    res.json(await addon.getCatalog(type, id, extraObj, config));
 });
-app.get("/:config/meta/:type/:id.json", async (req, res) => res.json(await addon.getMeta(req.params.type, req.params.id, req.params.config)));
+app.get("/:config/meta/:type/:id.json", async (req, res) => {
+    try {
+        res.json(await addon.getMeta(req.params.type, req.params.id, req.params.config));
+    } catch (e) {
+        console.error("[META ERROR]", e.message);
+        if (!res.headersSent) res.json({ meta: {} });
+    }
+});
 app.get("/:config/stream/:type/:id.json", async (req, res) => {
-    rememberConfig(req.params.config);
-    const host = req.headers.host;
-    res.json(await addon.getStreams(req.params.type, req.params.id, req.params.config, host));
+    try {
+        rememberConfig(req.params.config);
+        const host = req.headers.host;
+        res.json(await addon.getStreams(req.params.type, req.params.id, req.params.config, host));
+    } catch (e) {
+        console.error("[STREAM ERROR]", e.message);
+        if (!res.headersSent) res.json({ streams: [] });
+    }
 });
 
 // ROTA PRINCIPAL DO PROXY
