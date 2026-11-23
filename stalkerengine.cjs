@@ -112,6 +112,13 @@ for (const path of classicPaths) {
     return null;
 }
 
+function invalidateAuth(config) {
+    if (!config || !config.url) return;
+    const mac = (config.mac || "00:1A:79:00:00:00").toUpperCase();
+    const cleanBase = String(config.url).trim().replace(/\/$/, "");
+    authCache.delete(`auth_${cleanBase}_${mac}`);
+}
+
 // ============================================================
 // 2. CRIAÇÃO DE LINK (create_link unificado)
 // ============================================================
@@ -549,6 +556,7 @@ async function tryFfmpegExact(urlToPlay, auth, config, type, res, sessions, stre
 // ============================================================
 module.exports = {
     authenticate,
+    invalidateAuth,
     createStreamLink,
     startFfmpegRelay,
     generateFiller,
