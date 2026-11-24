@@ -128,14 +128,7 @@ async function createStreamLink(auth, config, stalkerCmd, type, sNum = null, opt
     const chCheck = (type === "tv" && !options.noLinkCheck) ? "&force_ch_link_check=1" : "";
     const realCmd = stalkerCmd;
 
-    const headers = Object.assign({}, auth.authData.headers);
-    if (options.clientIp) {
-        headers['X-Forwarded-For'] = options.clientIp;
-        headers['X-Real-IP'] = options.clientIp;
-        headers['Client-IP'] = options.clientIp;
-        console.log(`[LINK] create_link no ip ${options.clientIp}`);
-    }
-    const opts = getAxiosOpts(config, { headers, timeout: 5000 }, config.proxy);
+    const opts = getAxiosOpts(config, { headers: auth.authData.headers, timeout: 5000 }, config.proxy);
 
     const variants = [];
 
