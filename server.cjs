@@ -167,10 +167,8 @@ function clientIpOf(req) {
     return null;
 }
 
-// Tit4nium: o URL com play_token é um MPEG-TS que a Samsung/LG largam aos 5–30 s.
-// Servimos só a playlist (1–2 KB). Os segmentos vão directos da TV ao CDN.
-// Nunca fazer GET ao URL cru: isso abre a sessão única do Flussonic (X-Unique)
-// e a ligação da TV morre.
+// Tit4nium: /user/pass/id é MPEG-TS. O .m3u8 ao lado do número não existe (404).
+// O HLS está em /live/user/pass/id.m3u8. A TV só recebe a playlist.
 function isPlayToken(url) {
     return !!(url && /play_token=/i.test(url));
 }
@@ -179,14 +177,19 @@ function hlsCandidates(url) {
     let u;
     try { u = new URL(url); } catch (e) { return []; }
     const path = u.pathname.replace(/\/+$/, '');
-    const paths = /\.m3u8$/i.test(path)
-        ? [path]
-        : [path + '.m3u8', path + '/index.m3u8', path + '/mono.m3u8'];
-    return paths.map((pathname) => {
+    const add = (pathname) => {
         const c = new URL(u.toString());
         c.pathname = pathname;
         return c.toString();
-    });
+    };
+    if (/\.m3u8$/i.test(path)) return [add(path)];
+    return [
+        add('/live' + path + '.m3u8'),
+        add('/live' + path + '/index.m3u8'),
+        add(path + '.m3u8'),
+        add(path + '/index.m3u8'),
+        add(path + '/mono.m3u8')
+    ];
 }
 
 function hlsSelf(req, ticket) {
@@ -236,7 +239,7 @@ function pickVariant(text, base) {
     return best;
 }
 
-function fetchText(url, clientIp) {
+function fetchPlaylist(url, clientIp) {
     const headers = {
         'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
         'Accept': 'application/vnd.apple.mpegurl, application/x-mpegurl, */*',
@@ -260,30 +263,33 @@ function fetchText(url, clientIp) {
             try { res.data.destroy(); } catch (e) {}
             resolve(v);
         };
-        if (res.status < 200 || res.status >= 300) {
-            console.warn(`[HLS] ${res.status} ${String(url).substring(0, 110)}`);
-            return finish(null);
+        const status = res.status;
+        if (status < 200 || status >= 300) {
+            console.warn(`[HLS] ${status} ${String(url).substring(0, 120)}`);
+            return finish({ status, text: null });
         }
         const ctype = String(res.headers['content-type'] || '');
         if (/video|mp2t|octet-stream/i.test(ctype) && !/mpegurl|m3u8/i.test(ctype)) {
             console.warn(`[HLS] ${ctype} não é playlist`);
-            return finish(null);
+            return finish({ status, text: null });
         }
         const chunks = [];
         let total = 0;
         res.data.on('data', (c) => {
             total += c.length;
             chunks.push(c);
-            if (total >= 65536) finish(Buffer.concat(chunks).toString('utf8'));
+            if (total >= 65536) finish({ status, text: Buffer.concat(chunks).toString('utf8') });
         });
-        res.data.on('end', () => finish(Buffer.concat(chunks).toString('utf8')));
-        res.data.on('error', () => finish(null));
-    })).then((text) => {
-        if (!text || text.charCodeAt(0) === 0x47 || text.indexOf('#EXTM3U') === -1) return null;
-        return text;
+        res.data.on('end', () => finish({ status, text: Buffer.concat(chunks).toString('utf8') }));
+        res.data.on('error', () => finish({ status, text: null }));
+    })).then((r) => {
+        if (!r || !r.text || r.text.charCodeAt(0) === 0x47 || r.text.indexOf('#EXTM3U') === -1) {
+            return { status: r ? r.status : 0, text: null };
+        }
+        return r;
     }).catch((e) => {
         console.warn(`[HLS] fetch ${e.message}`);
-        return null;
+        return { status: 0, text: null };
     });
 }
 
@@ -296,36 +302,44 @@ async function makePlaylist(t) {
     if (!isPlayToken(t.url)) return null;
     let text = null;
     let used = null;
+    t.hlsRedirect = null;
     for (const cand of hlsCandidates(t.url)) {
-        text = await fetchText(cand, t.clientIp);
-        if (text) { used = cand; break; }
+        const got = await fetchPlaylist(cand, t.clientIp);
+        if (got.text) { text = got.text; used = cand; break; }
+        if ((got.status === 401 || got.status === 403) && !t.hlsRedirect) t.hlsRedirect = cand;
     }
     if (!text) {
+        t.plistFail = Date.now();
         console.warn(`[HLS] CDN sem playlist ${String(t.url).substring(0, 90)}`);
         return null;
     }
     if (text.indexOf('#EXT-X-STREAM-INF') !== -1) {
         const variant = pickVariant(text, used);
-        const sub = variant && await fetchText(variant, t.clientIp);
-        if (sub && sub.indexOf('#EXTINF') !== -1) {
-            text = sub;
+        const sub = variant && await fetchPlaylist(variant, t.clientIp);
+        if (sub && sub.text && sub.text.indexOf('#EXTINF') !== -1) {
+            text = sub.text;
             used = variant;
         }
     }
-    if (text.indexOf('#EXTINF') === -1) return null;
+    if (text.indexOf('#EXTINF') === -1) {
+        t.plistFail = Date.now();
+        return null;
+    }
     const body = rewritePlaylist(text, used);
     t.plist = body;
     t.plistAt = Date.now();
+    t.plistFail = 0;
     const seg = body.split('\n').find((l) => /^https?:\/\//i.test(l));
     if (seg) {
         try { console.log(`[HLS] segmentos directos em ${new URL(seg).host}`); } catch (e) {}
     }
-    console.log(`[HLS] playlist via ${used.substring(0, 110)}`);
+    console.log(`[HLS] playlist via ${used.substring(0, 120)}`);
     return body;
 }
 
 function ensurePlaylist(t) {
     if (t.plist && Date.now() - t.plistAt < 2000) return Promise.resolve(t.plist);
+    if (t.plistFail && Date.now() - t.plistFail < 2000) return Promise.resolve(null);
     if (!t.plistPending) t.plistPending = makePlaylist(t).finally(() => { t.plistPending = null; });
     return t.plistPending;
 }
@@ -488,26 +502,40 @@ app.get('/live/:ticket', async (req, res) => {
                 return directRedirect(res, url);
             }
             const body = await ensurePlaylist(t);
-            if (!body) {
-                console.warn(`[HLS] ${ticket} sem playlist, 302 para o TS`);
-                return directRedirect(res, url);
+            if (body) {
+                console.log(`[DIRECT] ${via}${ticket} playlist ${Buffer.byteLength(body)} bytes`);
+                if (req.method === 'HEAD') {
+                    res.writeHead(200, {
+                        'Content-Type': 'application/vnd.apple.mpegurl',
+                        'Content-Length': Buffer.byteLength(body),
+                        'Cache-Control': 'no-store, no-cache',
+                        'Access-Control-Allow-Origin': '*',
+                        Connection: 'close'
+                    });
+                    return res.end();
+                }
+                return sendPlaylist(res, body);
             }
-            console.log(`[DIRECT] ${via}${ticket} playlist ${Buffer.byteLength(body)} bytes`);
-            if (req.method === 'HEAD') {
+            if (t.hlsRedirect) {
+                console.log(`[DIRECT] ${via}${ticket} 302 hls cdn ${t.hlsRedirect.substring(0, 110)}`);
+                return directRedirect(res, t.hlsRedirect);
+            }
+            if (req.method === 'HEAD' || t.handedOff) {
+                console.log(`[DIRECT] ${ticket} sem hls, não reabro o TS`);
                 res.writeHead(200, {
-                    'Content-Type': 'application/vnd.apple.mpegurl',
-                    'Content-Length': Buffer.byteLength(body),
-                    'Cache-Control': 'no-store, no-cache',
+                    'Content-Type': 'video/mp2t',
+                    'Content-Length': 2147483647,
+                    'Cache-Control': 'no-store',
                     'Access-Control-Allow-Origin': '*',
                     Connection: 'close'
                 });
                 return res.end();
             }
-            return sendPlaylist(res, body);
+            t.handedOff = true;
+            console.warn(`[HLS] ${ticket} sem playlist, 302 para o TS`);
+            return directRedirect(res, url);
         }
 
-        // HEAD depois do play. No Flussonic um 302 para o TS abre a 2ª ligação e o X-Unique mata a imagem.
-        // Nos outros painéis o 302 para o mesmo URL é o que os mantém a tocar.
         if (req.method === 'HEAD' && t.redirected && t.url) {
             if (isPlayToken(t.url)) {
                 console.log(`[DIRECT] ${ticket} HEAD → playlist interna`);
