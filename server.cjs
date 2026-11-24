@@ -455,134 +455,9 @@ function startPlayWatch(t) {
     t.watchTimer = setInterval(beat, every);
 }
 
-function isPlayToken(url) {
-    return !!(url && /play_token=/i.test(url));
-}
-
-function cdnHlsUrl(tsUrl) {
-    try {
-        const u = new URL(tsUrl);
-        let path = u.pathname.replace(/\/+$/, '');
-        if (!/\.m3u8$/i.test(path)) {
-            if (!path.startsWith('/live/')) path = '/live' + path;
-            path += '.m3u8';
-        }
-        u.pathname = path;
-        return u.toString();
-    } catch (e) {
-        return null;
-    }
-}
-
-function hlsSelf(req, ticket) {
-    const host = req.headers.host;
-    const proto = /localhost|127\.0\.0\.1/i.test(String(host)) ? 'http' : 'https';
-    return `${proto}://${host}/live/${ticket}.m3u8`;
-}
-
-function rewriteLive(text, base) {
-    const baseUrl = new URL(base);
-    let endlist = false;
-    const lines = text.split(/\r?\n/).map((line) => {
-        const t = line.trim();
-        if (!t) return line;
-        if (t === '#EXT-X-ENDLIST') { endlist = true; return ''; }
-        if (t.startsWith('#EXT-X-PLAYLIST-TYPE:')) return '';
-        if (t.startsWith('#')) {
-            return t.replace(/URI="([^"]+)"/g, (_, uri) => {
-                try { return `URI="${new URL(uri, baseUrl).toString()}"`; }
-                catch (e) { return `URI="${uri}"`; }
-            });
-        }
-        try { return new URL(t, baseUrl).toString(); }
-        catch (e) { return line; }
-    }).filter((l) => l !== '');
-    return { body: lines.join('\n') + '\n', endlist };
-}
-
-function fetchPlaylistText(url, clientIp) {
-    const headers = {
-        'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
-        'Accept': 'application/vnd.apple.mpegurl, application/x-mpegurl, */*',
-        'Connection': 'close'
-    };
-    if (clientIp) {
-        headers['X-Forwarded-For'] = clientIp;
-        headers['X-Real-IP'] = clientIp;
-    }
-    return axios.get(url, {
-        headers,
-        timeout: 5000,
-        responseType: 'text',
-        maxRedirects: 2,
-        validateStatus: () => true,
-        transformResponse: [(d) => d]
-    }).then((res) => {
-        const text = typeof res.data === 'string' ? res.data : '';
-        if (res.status < 200 || res.status >= 300 || text.indexOf('#EXTM3U') === -1) {
-            console.warn(`[HLS] ${res.status} ${String(url).substring(0, 110)}`);
-            return { status: res.status, text: null };
-        }
-        return { status: res.status, text };
-    }).catch((e) => {
-        console.warn(`[HLS] fetch ${e.message}`);
-        return { status: 0, text: null };
-    });
-}
-
-async function livePlaylist(t) {
-    if (!t.url) {
-        const src = await resolveDirectTicket(t);
-        if (!src) return null;
-    }
-    let hls = t.hlsUrl || cdnHlsUrl(t.url);
-    if (!hls) return null;
-    let got = await fetchPlaylistText(hls, t.clientIp);
-    if (!got.text) {
-        t.url = null;
-        t.hlsUrl = null;
-        const src = await resolveDirectTicket(t);
-        if (!src) return t.plist || null;
-        hls = cdnHlsUrl(src);
-        t.hlsUrl = hls;
-        got = await fetchPlaylistText(hls, t.clientIp);
-        if (!got.text) return t.plist || null;
-        console.log('[HLS] token renovado');
-    } else {
-        t.hlsUrl = hls;
-    }
-    let text = got.text;
-    let used = hls;
-    if (text.indexOf('#EXT-X-STREAM-INF') !== -1) {
-        const variant = pickVariant(text, used);
-        const sub = variant && await fetchPlaylistText(variant, t.clientIp);
-        if (sub && sub.text && sub.text.indexOf('#EXTINF') !== -1) {
-            text = sub.text;
-            used = variant;
-        }
-    }
-    if (text.indexOf('#EXTINF') === -1) return t.plist || null;
-    const rewritten = rewriteLive(text, used);
-    t.plist = rewritten.body;
-    t.plistAt = Date.now();
-    if (!t.loggedPl) {
-        t.loggedPl = true;
-        const seg = rewritten.body.split('\n').find((l) => /^https?:\/\//.test(l));
-        console.log(`[HLS] ${rewritten.endlist ? 'tinha ENDLIST, removido' : 'janela live'} ${seg ? seg.substring(0, 140) : ''}`);
-    }
-    return rewritten.body;
-}
-
-function ensureLive(t) {
-    if (t.plist && Date.now() - t.plistAt < 2000) return Promise.resolve(t.plist);
-    if (!t.plistPending) t.plistPending = livePlaylist(t).finally(() => { t.plistPending = null; });
-    return t.plistPending;
-}
-
 app.get('/live/:ticket', async (req, res) => {
-    const rawTicket = req.params.ticket || '';
-    const wantHls = /\.m3u8$/i.test(rawTicket);
-    let ticket = rawTicket.replace(/\.(m3u8|ts)$/i, '');
+    let ticket = req.params.ticket || '';
+    ticket = ticket.replace(/\.(m3u8|ts)$/i, '');
     const table = global.directTickets;
     const t = table && table.get(ticket);
     if (!t || t.exp < Date.now()) {
@@ -593,89 +468,54 @@ app.get('/live/:ticket', async (req, res) => {
     const seenIp = clientIpOf(req);
     if (seenIp) t.clientIp = seenIp;
     const via = req.method === 'HEAD' ? 'HEAD ' : '';
-
-    const sendPlaylist = (body) => {
-        const headers = {
-            'Content-Type': 'application/vnd.apple.mpegurl',
-            'Content-Length': Buffer.byteLength(body),
-            'Cache-Control': 'no-store, no-cache',
-            'Pragma': 'no-cache',
-            'Access-Control-Allow-Origin': '*',
-            Connection: 'close'
-        };
-        if (req.method === 'HEAD') {
-            res.writeHead(200, headers);
-            return res.end();
-        }
-        res.writeHead(200, headers);
-        res.end(body);
-    };
-
-    const toOurPlaylist = () => {
-        const self = hlsSelf(req, ticket);
-        console.log(`[DIRECT] ${via}${ticket} 302 playlist nossa`);
-        return directRedirect(res, self);
-    };
-
     try {
-        if (wantHls) {
-            const url = t.url || await resolveDirectTicket(t);
-            if (!url) {
-                console.error(`[DIRECT] Sem URL para ${ticket}`);
-                return res.status(502).type('text/plain').send('nolink');
-            }
-            t.redirected = true;
-            if (!t.redirectedAt) t.redirectedAt = Date.now();
-            if (!isPlayToken(url)) {
-                startPlayWatch(t);
-                return directRedirect(res, url);
-            }
-            const body = await ensureLive(t);
-            if (!body) return res.status(502).type('text/plain').send('nohls');
-            console.log(`[DIRECT] ${via}${ticket} playlist ${Buffer.byteLength(body)} bytes`);
-            return sendPlaylist(body);
-        }
-
-        if (req.method === 'HEAD' && t.redirected && t.url && isPlayToken(t.url)) {
-            return toOurPlaylist();
-        }
+        // HEAD com 204/200 vazio faz a TV tratar o /live como ficheiro acabado.
+        // Segue para o mesmo destino, sem criar outro play_token.
         if (req.method === 'HEAD' && t.redirected && t.url) {
             console.log(`[DIRECT] ${ticket} HEAD 302 mesmo destino`);
             return directRedirect(res, t.url);
         }
 
+        // LG / VLC: um único pedido. Renova o play_token se o anterior já tiver >45s.
         if (isLiveSingleFetch(req)) {
             const age = t.redirectedAt ? Date.now() - t.redirectedAt : Infinity;
-            if (!(t.url && age < 45000) && !isPlayToken(t.url)) t.url = null;
+            if (!(t.url && age < 45000)) t.url = null;
             const url = await resolveDirectTicket(t);
-            if (!url) return res.status(502).type('text/plain').send('nolink');
+            if (!url) {
+                console.error(`[DIRECT] Sem URL para ${ticket}`);
+                return res.status(502).type('text/plain').send('nolink');
+            }
             t.redirected = true;
-            if (!t.redirectedAt) t.redirectedAt = Date.now();
-            if (isPlayToken(url)) return toOurPlaylist();
+            if (!(age < 45000)) t.redirectedAt = Date.now();
             console.log(`[DIRECT] ${via}${ticket} 302 único → ${url.substring(0, 90)}`);
             startPlayWatch(t);
             return directRedirect(res, url);
         }
 
+        // Samsung / leitores com 2 pedidos: 1ª = sonda SEM gastar play_token
         if (!t.probed) {
             t.probed = true;
             console.log(`[DIRECT] ${via}${ticket} 1ª sonda (ainda sem create_link)`);
             return directProbe(res);
         }
 
+        // 2º pedido = play: create_link agora e 302 já a seguir (token ainda fresco)
         if (!t.redirected) {
             const url = await resolveDirectTicket(t);
-            if (!url) return res.status(502).type('text/plain').send('nolink');
+            if (!url) {
+                console.error(`[DIRECT] Sem URL para ${ticket}`);
+                return res.status(502).type('text/plain').send('nolink');
+            }
             t.redirected = true;
             t.redirectedAt = Date.now();
-            if (isPlayToken(url)) return toOurPlaylist();
             console.log(`[DIRECT] ${via}${ticket} 302 play → ${url.substring(0, 90)}`);
             startPlayWatch(t);
             return directRedirect(res, url);
         }
 
-        if (isPlayToken(t.url)) return toOurPlaylist();
-
+        // O player volta a pedir /live poucos segundos depois. Um TS falso de 188 bytes
+        // ou um HEAD 200 vazio faz a app tratar o canal como acabado (~5–10 s).
+        // O mesmo play_token, sem create_link.
         const age = t.redirectedAt ? Date.now() - t.redirectedAt : 0;
         if (t.url && age < 45000) {
             console.log(`[DIRECT] ${via}${ticket} 302 mesmo token (${Math.round(age / 1000)}s)`);
@@ -683,9 +523,11 @@ app.get('/live/:ticket', async (req, res) => {
         }
         t.url = null;
         const url = await resolveDirectTicket(t);
-        if (!url) return res.status(502).type('text/plain').send('nolink');
+        if (!url) {
+            console.error(`[DIRECT] Renovação falhou para ${ticket}`);
+            return res.status(502).type('text/plain').send('nolink');
+        }
         t.redirectedAt = Date.now();
-        if (isPlayToken(url)) return toOurPlaylist();
         console.log(`[DIRECT] ${ticket} 302 renovado (${Math.round(age / 1000)}s) → ${url.substring(0, 90)}`);
         startPlayWatch(t);
         return directRedirect(res, url);
