@@ -60,7 +60,10 @@ async function sendKeepAlive(list) {
         const auth = await engine.authenticate(list, list.proxy);
         if (!auth || !auth.api || !auth.token) return false;
 
-        const url = `${auth.api}type=stb&action=get_events&event_active_id=0&init=0&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+        const playing = global.playWatchers && [...global.playWatchers.values()].some((w) => w && w.config && w.config.url === list.url && w.redirectedAt);
+        const url = playing
+            ? `${auth.api}type=watchdog&action=get_events&init=0&cur_play_type=1&event_active_id=0&buffering_err=0&need_quality=0&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`
+            : `${auth.api}type=stb&action=get_events&event_active_id=0&init=0&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
         const res = await axios.get(url, engine.getAxiosOpts(list, {
             headers: auth.authData.headers,
             timeout: 4000
@@ -196,11 +199,12 @@ async function buildDirectUrl(t) {
             raw = cleaned;
         } else {
             let auth = await engine.authenticate(t.config, t.config.proxy);
-            if (auth) raw = await engine.createStreamLink(auth, t.config, t.cmd, t.type || 'tv', t.sNum || null);
+            const linkOpts = { preferLongLived: true, noLinkCheck: true };
+            if (auth) raw = await engine.createStreamLink(auth, t.config, t.cmd, t.type || 'tv', t.sNum || null, linkOpts);
             if (!raw) {
                 engine.invalidateAuth(t.config);
                 auth = await engine.authenticate(t.config, t.config.proxy);
-                if (auth) raw = await engine.createStreamLink(auth, t.config, t.cmd, t.type || 'tv', t.sNum || null);
+                if (auth) raw = await engine.createStreamLink(auth, t.config, t.cmd, t.type || 'tv', t.sNum || null, linkOpts);
             }
         }
     }
@@ -217,9 +221,9 @@ function resolveDirectTicket(t) {
     return t.pending;
 }
 
-// Enquanto o canal toca, a box MAG chama watchdog com cur_play_type=1
-// antes do watchdog_timeout. Sem isto o portal corta o play_token (~60s).
-// Não faz create_link: um token novo mata o que está a tocar.
+// O play_token do Flussonic fica válido 10 h depois do primeiro pedido (X-AuthDuration).
+// get_profile logo a seguir ao create_link apaga o tmp link de 5 s em vários painéis.
+// O primeiro batimento só aos 20 s, para a TV já estar autorizada no CDN.
 function startPlayWatch(t) {
     if (!t || t.kind === 'url' || !t.config || t.config.type === 'm3u' || t.config.type === 'xtream') return;
     if (t.watchTimer || t.watchStarting) return;
@@ -265,23 +269,9 @@ function startPlayWatch(t) {
         }
     };
 
-    (async () => {
-        let every = 20000;
-        try {
-            const auth = await engine.authenticate(t.config, t.config.proxy);
-            if (auth) {
-                const opts = engine.getAxiosOpts(t.config, { headers: auth.authData.headers, timeout: 4000 });
-                const res = await axios.get(`${auth.api}type=stb&action=get_profile&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, opts);
-                const wd = parseInt(res.data?.js?.watchdog_timeout, 10);
-                if (wd >= 30 && wd <= 300) every = Math.max(15000, Math.floor((wd * 1000) / 3));
-                console.log(`[DIRECT] watchdog_timeout=${wd || '?'}s, heartbeat ${Math.round(every / 1000)}s`);
-            }
-        } catch (e) {}
-        if (t.exp < Date.now() || global.playWatchers.get(macKey) !== t) return;
-        if (t.watchTimer) clearInterval(t.watchTimer);
-        t.watchTimer = setInterval(beat, every);
-        beat();
-    })();
+    const every = 20000;
+    console.log(`[DIRECT] watchdog daqui a ${every / 1000}s, sem get_profile`);
+    t.watchTimer = setInterval(beat, every);
 }
 
 app.get('/live/:ticket', async (req, res) => {
@@ -294,10 +284,18 @@ app.get('/live/:ticket', async (req, res) => {
         return res.status(404).type('text/plain').send('expired');
     }
     t.exp = Date.now() + 6 * 60 * 60 * 1000;
+    const via = req.method === 'HEAD' ? 'HEAD ' : '';
     try {
-        if (req.method === 'HEAD') {
-            console.log(`[DIRECT] ${ticket} HEAD`);
-            res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Cache-Control': 'no-store', 'Connection': 'close' });
+        // Já está a tocar. Um HEAD 200 video/mp2t faz o Node responder Content-Length: 0
+        // e a Samsung fecha o canal ao fim do buffer (~5 s). Não voltar a abrir o CDN:
+        // o Flussonic tem X-Unique e a segunda ligação mata a que está a tocar.
+        if (req.method === 'HEAD' && t.redirected && t.url) {
+            console.log(`[DIRECT] ${ticket} HEAD enquanto toca (204, ligação actual mantida)`);
+            res.writeHead(204, {
+                'Cache-Control': 'no-store',
+                'Access-Control-Allow-Origin': '*',
+                'Connection': 'keep-alive'
+            });
             return res.end();
         }
 
@@ -312,7 +310,7 @@ app.get('/live/:ticket', async (req, res) => {
             }
             t.redirected = true;
             if (!(age < 45000)) t.redirectedAt = Date.now();
-            console.log(`[DIRECT] ${ticket} 302 único → ${url.substring(0, 90)}`);
+            console.log(`[DIRECT] ${via}${ticket} 302 único → ${url.substring(0, 90)}`);
             startPlayWatch(t);
             return directRedirect(res, url);
         }
@@ -320,7 +318,7 @@ app.get('/live/:ticket', async (req, res) => {
         // Samsung / leitores com 2 pedidos: 1ª = sonda SEM gastar play_token
         if (!t.probed) {
             t.probed = true;
-            console.log(`[DIRECT] ${ticket} 1ª sonda (ainda sem create_link)`);
+            console.log(`[DIRECT] ${via}${ticket} 1ª sonda (ainda sem create_link)`);
             return directProbe(res);
         }
 
@@ -333,16 +331,17 @@ app.get('/live/:ticket', async (req, res) => {
             }
             t.redirected = true;
             t.redirectedAt = Date.now();
-            console.log(`[DIRECT] ${ticket} 302 play → ${url.substring(0, 90)}`);
+            console.log(`[DIRECT] ${via}${ticket} 302 play → ${url.substring(0, 90)}`);
             startPlayWatch(t);
             return directRedirect(res, url);
         }
 
         // O player volta a pedir /live poucos segundos depois. Um TS falso de 188 bytes
-        // faz a app tratar o canal como acabado (~10s). O mesmo play_token, sem create_link.
+        // ou um HEAD 200 vazio faz a app tratar o canal como acabado (~5–10 s).
+        // O mesmo play_token, sem create_link.
         const age = t.redirectedAt ? Date.now() - t.redirectedAt : 0;
         if (t.url && age < 45000) {
-            console.log(`[DIRECT] ${ticket} 302 mesmo token (${Math.round(age / 1000)}s)`);
+            console.log(`[DIRECT] ${via}${ticket} 302 mesmo token (${Math.round(age / 1000)}s)`);
             return directRedirect(res, t.url);
         }
         t.url = null;
