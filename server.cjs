@@ -160,9 +160,186 @@ function normalizePlayUrl(url, portalUrl) {
     return url;
 }
 
+function clientIpOf(req) {
+    const raw = req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || '';
+    const ip = String(raw).split(',')[0].trim();
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(ip) || ip.includes(':')) return ip;
+    return null;
+}
+
+// Tit4nium: o URL com play_token é um MPEG-TS que a TV larga aos 10–30 s.
+// Servimos só a playlist (1–2 KB). Os segmentos vão directos da TV ao CDN.
+function toM3u8(url) {
+    try {
+        const u = new URL(url);
+        if (!/\.m3u8$/i.test(u.pathname)) u.pathname += '.m3u8';
+        return u.toString();
+    } catch (e) {
+        return url;
+    }
+}
+
+function absolutize(uri, base) {
+    const u = new URL(uri, base);
+    const b = new URL(base);
+    for (const [k, v] of b.searchParams) {
+        if (!u.searchParams.has(k)) u.searchParams.set(k, v);
+    }
+    return u.toString();
+}
+
+function rewritePlaylist(text, base) {
+    return text.split(/\r?\n/).map((line) => {
+        const t = line.trim();
+        if (!t) return line;
+        if (t.startsWith('#')) {
+            return t.replace(/URI="([^"]+)"/g, (_, uri) => {
+                try { return `URI="${absolutize(uri, base)}"`; } catch (e) { return `URI="${uri}"`; }
+            });
+        }
+        try { return absolutize(t, base); } catch (e) { return line; }
+    }).join('\n') + '\n';
+}
+
+function pickVariant(text, base) {
+    const lines = text.split(/\r?\n/);
+    let best = null;
+    let bestBw = -1;
+    let bw = 0;
+    for (const line of lines) {
+        const m = line.match(/BANDWIDTH=(\d+)/);
+        if (m) bw = parseInt(m[1], 10);
+        else if (line.trim() && !line.startsWith('#')) {
+            if (bw >= bestBw) {
+                bestBw = bw;
+                try { best = new URL(line.trim(), base).toString(); } catch (e) {}
+            }
+            bw = 0;
+        }
+    }
+    return best;
+}
+
+function rollingPlaylist(seq, mediaUrl) {
+    return '#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:10\n#EXT-X-MEDIA-SEQUENCE:' + seq + '\n#EXT-X-DISCONTINUITY\n#EXTINF:10.0,\n' + mediaUrl + '\n';
+}
+
+function fetchText(url, clientIp) {
+    const headers = {
+        'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3',
+        'Accept': 'application/vnd.apple.mpegurl, application/x-mpegurl, */*',
+        'Range': 'bytes=0-8191',
+        'Connection': 'close'
+    };
+    if (clientIp) {
+        headers['X-Forwarded-For'] = clientIp;
+        headers['X-Real-IP'] = clientIp;
+    }
+    return axios.get(url, {
+        headers,
+        timeout: 4000,
+        responseType: 'stream',
+        maxRedirects: 2,
+        validateStatus: () => true
+    }).then((res) => new Promise((resolve) => {
+        const kill = () => { try { res.data.destroy(); } catch (e) {} };
+        if (res.status < 200 || res.status >= 300) {
+            console.warn(`[HLS] ${res.status} ${String(url).substring(0, 90)}`);
+            kill();
+            return resolve(null);
+        }
+        const ctype = String(res.headers['content-type'] || '');
+        if (/video|mp2t|octet-stream/i.test(ctype) && !/mpegurl|m3u8/i.test(ctype)) {
+            console.warn(`[HLS] ${ctype} não é playlist`);
+            kill();
+            return resolve(null);
+        }
+        const chunks = [];
+        let total = 0;
+        const finish = (v) => { kill(); resolve(v); };
+        res.data.on('data', (c) => {
+            total += c.length;
+            chunks.push(c);
+            if (total >= 65536) finish(Buffer.concat(chunks).toString('utf8'));
+        });
+        res.data.on('end', () => finish(Buffer.concat(chunks).toString('utf8')));
+        res.data.on('error', () => finish(null));
+    })).then((text) => {
+        if (!text || text.charCodeAt(0) === 0x47 || text.indexOf('#EXTM3U') === -1) return null;
+        return text;
+    }).catch((e) => {
+        console.warn(`[HLS] fetch ${e.message}`);
+        return null;
+    });
+}
+
+async function makePlaylist(t) {
+    if (!t.url) {
+        const src = await resolveDirectTicket(t);
+        if (!src) return null;
+        t.redirectedAt = Date.now();
+    }
+    if (!/play_token=/i.test(t.url)) return null;
+    const hlsUrl = toM3u8(t.url);
+    let text = await fetchText(hlsUrl, t.clientIp);
+    let used = hlsUrl;
+    if (!text && hlsUrl !== t.url) {
+        text = await fetchText(t.url, t.clientIp);
+        used = t.url;
+    }
+    if (text && text.indexOf('#EXT-X-STREAM-INF') !== -1) {
+        const variant = pickVariant(text, used);
+        const sub = variant && await fetchText(variant, t.clientIp);
+        if (sub && sub.indexOf('#EXTINF') !== -1) {
+            text = sub;
+            used = variant;
+        }
+    }
+    if (text && text.indexOf('#EXTINF') !== -1) {
+        const body = rewritePlaylist(text, used);
+        t.plist = body;
+        t.plistAt = Date.now();
+        const seg = body.split('\n').find((l) => /^https?:\/\//i.test(l));
+        if (seg) {
+            try { console.log(`[HLS] segmentos directos em ${new URL(seg).host}`); } catch (e) {}
+        }
+        return body;
+    }
+    if (t.redirectedAt && Date.now() - t.redirectedAt > 8000) {
+        t.url = null;
+        const src = await resolveDirectTicket(t);
+        if (!src) return null;
+        t.redirectedAt = Date.now();
+        console.log('[HLS] token renovado');
+    }
+    t.seq = (t.seq || 0) + 1;
+    const body = rollingPlaylist(t.seq, t.url);
+    t.plist = body;
+    t.plistAt = Date.now();
+    console.log(`[HLS] retoma seq=${t.seq}`);
+    return body;
+}
+
+function ensurePlaylist(t) {
+    if (t.plist && Date.now() - t.plistAt < 2000) return Promise.resolve(t.plist);
+    if (!t.plistPending) t.plistPending = makePlaylist(t).finally(() => { t.plistPending = null; });
+    return t.plistPending;
+}
+
+function sendPlaylist(res, body) {
+    res.writeHead(200, {
+        'Content-Type': 'application/vnd.apple.mpegurl',
+        'Content-Length': Buffer.byteLength(body),
+        'Cache-Control': 'no-store, no-cache',
+        'Access-Control-Allow-Origin': '*',
+        'Connection': 'close'
+    });
+    res.end(body);
+}
+
 function isLiveSingleFetch(req) {
     const ua = req.headers['user-agent'] || '';
-    return /tizen|samsung|smart-tv|smarttv|web0s|webos|netcast|lge|lg browser|vlc|mpv|lavf|libmpv/i.test(ua);
+    return /web0s|webos|netcast|lge|lg browser|vlc|mpv|lavf|libmpv/i.test(ua);
 }
 
 function directProbe(res) {
@@ -199,7 +376,7 @@ async function buildDirectUrl(t) {
             raw = cleaned;
         } else {
             let auth = await engine.authenticate(t.config, t.config.proxy);
-            const linkOpts = { preferLongLived: true, noLinkCheck: true };
+            const linkOpts = { preferLongLived: true, noLinkCheck: true, clientIp: t.clientIp || null };
             if (auth) raw = await engine.createStreamLink(auth, t.config, t.cmd, t.type || 'tv', t.sNum || null, linkOpts);
             if (!raw) {
                 engine.invalidateAuth(t.config);
@@ -209,16 +386,6 @@ async function buildDirectUrl(t) {
         }
     }
     const url = normalizePlayUrl(raw, t.config && t.config.url);
-    
-    // ✅ A MAGIA PARA A SAMSUNG (TIT4NIUM)
-    // Se o link tiver a porta 2096, mudamos de HTTPS para HTTP (a TV odeia o SSL desta porta)
-    if (url && (url.includes(':2096') || url.includes('ssl.i-main'))) {
-        const fixedUrl = url.replace('https://', 'http://');
-        t.url = fixedUrl;
-        console.log(`[DIRECT] Fix Tizen (SSL->HTTP): ${fixedUrl.substring(0, 60)}...`);
-        return fixedUrl;
-    }
-
     if (url) t.url = url;
     return url;
 }
@@ -236,6 +403,10 @@ function resolveDirectTicket(t) {
 // O primeiro batimento só aos 20 s, para a TV já estar autorizada no CDN.
 function startPlayWatch(t) {
     if (!t || t.kind === 'url' || !t.config || t.config.type === 'm3u' || t.config.type === 'xtream') return;
+    if (t.url && /play_token=/i.test(t.url)) {
+        console.log('[DIRECT] play_token: sem watchdog');
+        return;
+    }
     if (t.watchTimer || t.watchStarting) return;
     t.watchStarting = true;
     console.log(`[DIRECT] watchdog a iniciar ${t.config.url || ''}`);
@@ -294,20 +465,15 @@ app.get('/live/:ticket', async (req, res) => {
         return res.status(404).type('text/plain').send('expired');
     }
     t.exp = Date.now() + 6 * 60 * 60 * 1000;
+    const seenIp = clientIpOf(req);
+    if (seenIp) t.clientIp = seenIp;
     const via = req.method === 'HEAD' ? 'HEAD ' : '';
     try {
-        // Já está a tocar. Um HEAD 200 video/mp2t faz o Node responder Content-Length: 0
-        // e a Samsung fecha o canal ao fim do buffer (~5 s). Não voltar a abrir o CDN:
-        // o Flussonic tem X-Unique e a segunda ligação mata a que está a tocar.
+        // HEAD com 204/200 vazio faz a TV tratar o /live como ficheiro acabado.
+        // Segue para o mesmo destino, sem criar outro play_token.
         if (req.method === 'HEAD' && t.redirected && t.url) {
-    console.log(`[DIRECT] ${ticket} HEAD enquanto toca (200 OK)`);
-    res.writeHead(200, { 
-        'Content-Type': 'video/mp2t',
-        'Cache-Control': 'no-store',
-        'Access-Control-Allow-Origin': '*',
-        'Connection': 'keep-alive'
-    });
-    return res.end();
+            console.log(`[DIRECT] ${ticket} HEAD 302 mesmo destino`);
+            return directRedirect(res, t.url);
         }
 
         // LG / VLC: um único pedido. Renova o play_token se o anterior já tiver >45s.
