@@ -209,6 +209,16 @@ async function buildDirectUrl(t) {
         }
     }
     const url = normalizePlayUrl(raw, t.config && t.config.url);
+    
+    // ✅ A MAGIA PARA A SAMSUNG (TIT4NIUM)
+    // Se o link tiver a porta 2096, mudamos de HTTPS para HTTP (a TV odeia o SSL desta porta)
+    if (url && (url.includes(':2096') || url.includes('ssl.i-main'))) {
+        const fixedUrl = url.replace('https://', 'http://');
+        t.url = fixedUrl;
+        console.log(`[DIRECT] Fix Tizen (SSL->HTTP): ${fixedUrl.substring(0, 60)}...`);
+        return fixedUrl;
+    }
+
     if (url) t.url = url;
     return url;
 }
@@ -289,14 +299,16 @@ app.get('/live/:ticket', async (req, res) => {
         // Já está a tocar. Um HEAD 200 video/mp2t faz o Node responder Content-Length: 0
         // e a Samsung fecha o canal ao fim do buffer (~5 s). Não voltar a abrir o CDN:
         // o Flussonic tem X-Unique e a segunda ligação mata a que está a tocar.
-        if (req.method === 'HEAD' && t.redirected && t.url) {
-            console.log(`[DIRECT] ${ticket} HEAD enquanto toca (204, ligação actual mantida)`);
-            res.writeHead(204, {
-                'Cache-Control': 'no-store',
-                'Access-Control-Allow-Origin': '*',
-                'Connection': 'keep-alive'
-            });
-            return res.end();
+        if if (req.method === 'HEAD' && t.redirected && t.url) {
+    console.log(`[DIRECT] ${ticket} HEAD enquanto toca (200 OK)`);
+    res.writeHead(200, { 
+        'Content-Type': 'video/mp2t',
+        'Cache-Control': 'no-store',
+        'Access-Control-Allow-Origin': '*',
+        'Connection': 'keep-alive'
+    });
+    return res.end();
+}
         }
 
         // LG / VLC: um único pedido. Renova o play_token se o anterior já tiver >45s.
