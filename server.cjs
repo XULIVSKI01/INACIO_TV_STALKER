@@ -308,7 +308,6 @@ app.get('/live/:ticket', async (req, res) => {
         'Connection': 'keep-alive'
     });
     return res.end();
-}
         }
 
         // LG / VLC: um único pedido. Renova o play_token se o anterior já tiver >45s.
