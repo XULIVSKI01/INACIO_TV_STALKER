@@ -299,7 +299,7 @@ app.get('/live/:ticket', async (req, res) => {
         // Já está a tocar. Um HEAD 200 video/mp2t faz o Node responder Content-Length: 0
         // e a Samsung fecha o canal ao fim do buffer (~5 s). Não voltar a abrir o CDN:
         // o Flussonic tem X-Unique e a segunda ligação mata a que está a tocar.
-        if if (req.method === 'HEAD' && t.redirected && t.url) {
+        if (req.method === 'HEAD' && t.redirected && t.url) {
     console.log(`[DIRECT] ${ticket} HEAD enquanto toca (200 OK)`);
     res.writeHead(200, { 
         'Content-Type': 'video/mp2t',
