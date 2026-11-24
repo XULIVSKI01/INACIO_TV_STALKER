@@ -162,7 +162,7 @@ function normalizePlayUrl(url, portalUrl) {
 
 function isLiveSingleFetch(req) {
     const ua = req.headers['user-agent'] || '';
-    return /web0s|webos|netcast|lge|lg browser|vlc|mpv|lavf|libmpv/i.test(ua);
+    return /tizen|samsung|smart-tv|smarttv|web0s|webos|netcast|lge|lg browser|vlc|mpv|lavf|libmpv/i.test(ua);
 }
 
 function directProbe(res) {
