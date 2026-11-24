@@ -122,35 +122,25 @@ function invalidateAuth(config) {
 // ============================================================
 // 2. CRIAÇÃO DE LINK (create_link unificado)
 // ============================================================
-async function createStreamLink(auth, config, stalkerCmd, type, sNum = null, options = {}) {
+async function createStreamLink(auth, config, stalkerCmd, type, sNum = null) {
     const cmdType = (type === "movie" || type === "series") ? "vod" : "itv";
     const seriesParam = sNum ? `&series=${sNum}` : '';
-    const chCheck = (type === "tv" && !options.noLinkCheck) ? "&force_ch_link_check=1" : "";
+    const chCheck = type === "tv" ? "&force_ch_link_check=1" : "";
     const realCmd = stalkerCmd;
 
     const opts = getAxiosOpts(config, { headers: auth.authData.headers, timeout: 5000 }, config.proxy);
 
-    const variants = [];
-
-    // Directo TV: o TTL por defeito do portal (tv_tmp_link_ttl) é 5 segundos.
-    // long_lived e sem force_ch_link_check — esse check abre o fluxo no servidor
-    // e o Flussonic (X-Unique) corta a ligação da TV.
-    if (options.preferLongLived) {
-        variants.push({ url: () => `${auth.api}type=${cmdType}&action=create_link&cmd=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}&long_lived=1&JsHttpRequest=1-0`, tag: 'long_lived' });
-        variants.push({ url: () => `${auth.api}type=${cmdType}&action=create_link&cmd=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, tag: 'cmd' });
-    }
-
     // Lista de variantes, por ordem de tentativa
-    variants.push(
+    const variants = [
         // 1. cmd sem long_lived (o que funciona no HuggingFace)
-        { url: () => `${auth.api}type=${cmdType}&action=create_link&cmd=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&JsHttpRequest=1-0`, tag: 'cmd' },
+        { url: () => `${auth.api}type=${cmdType}&action=create_link&cmd=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&JsHttpRequest=1-0` },
         // 2. cmd com long_lived
-        { url: () => `${auth.api}type=${cmdType}&action=create_link&cmd=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0`, tag: 'long_lived' },
+        { url: () => `${auth.api}type=${cmdType}&action=create_link&cmd=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0` },
         // 3. video_id sem long_lived
-        { url: () => `${auth.api}type=${cmdType}&action=create_link&video_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&JsHttpRequest=1-0`, tag: 'video_id' },
+        { url: () => `${auth.api}type=${cmdType}&action=create_link&video_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&JsHttpRequest=1-0` },
         // 4. video_id com long_lived
-        { url: () => `${auth.api}type=${cmdType}&action=create_link&video_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0`, tag: 'video_id_long' }
-    );
+        { url: () => `${auth.api}type=${cmdType}&action=create_link&video_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0` }
+    ];
 
     // Séries — variantes adicionais
     if (type === "series") {
@@ -169,10 +159,7 @@ async function createStreamLink(auth, config, stalkerCmd, type, sNum = null, opt
         try {
             const res = await axios.get(v.url(), opts).catch(() => ({}));
             const url = extractUrl(res.data?.js);
-            if (url) {
-                if (options.preferLongLived) console.log(`[LINK] directo via ${v.tag}`);
-                return url;
-            }
+            if (url) return url;
         } catch(e) { continue; }
     }
 
