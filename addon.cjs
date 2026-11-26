@@ -511,19 +511,33 @@ if (!cached || (Date.now() - cached.lastUpdate > CACHE_TTL)) {
                     }
                 } else {
                     const auth = await this.authenticate(config);
-                    if (auth) {
-                        const apiBase = `${auth.api}sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
-                        const opts = engine.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 10000 });
+if (auth) {
+    const apiBase = `${auth.api}sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`;
+    const opts = engine.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 10000 });
 
-                        let rFirst = await axios.get(`${apiBase}&type=series&action=get_ordered_list&movie_id=${sId}`, opts);
-                        let levels = rFirst.data?.js?.data || rFirst.data?.js || [];
-                        levels = Array.isArray(levels) ? levels : Object.values(levels);
+    let rFirst = await axios.get(`${apiBase}&type=series&action=get_ordered_list&movie_id=${sId}`, opts);
+    let levels = rFirst.data?.js?.data || rFirst.data?.js || [];
+    levels = Array.isArray(levels) ? levels : Object.values(levels);
 
-                        if (levels.length === 0) {
-                            let rSecond = await axios.get(`${apiBase}&type=vod&action=get_ordered_list&movie_id=${sId}`, opts);
-                            let levelsSecond = rSecond.data?.js?.data || rSecond.data?.js || [];
-                            levels = Array.isArray(levelsSecond) ? levelsSecond : Object.values(levelsSecond);
-                        }
+    if (levels.length === 0) {
+        let rSecond = await axios.get(`${apiBase}&type=vod&action=get_ordered_list&movie_id=${sId}`, opts);
+        let levelsSecond = rSecond.data?.js?.data || rSecond.data?.js || [];
+        levels = Array.isArray(levelsSecond) ? levelsSecond : Object.values(levelsSecond);
+    }
+
+    // ✅ A CORREÇÃO: Se não encontrou episódios, pode ser token expirado. Limpa e tenta de novo!
+    if (levels.length === 0) {
+        console.log(`[META] Sem episódios. Token expirou? A forçar nova autenticação...`);
+        engine.invalidateAuth(config);
+        const newAuth = await this.authenticate(config);
+        if (newAuth) {
+            const newApiBase = `${newAuth.api}sn=${newAuth.authData.sn}&token=${newAuth.token}&JsHttpRequest=1-0`;
+            const newOpts = engine.getAxiosOpts(config, { headers: newAuth.authData.headers, timeout: 10000 });
+            const rRetry = await axios.get(`${newApiBase}&type=series&action=get_ordered_list&movie_id=${sId}`, newOpts);
+            levels = rRetry.data?.js?.data || rRetry.data?.js || [];
+            levels = Array.isArray(levels) ? levels : Object.values(levels);
+        }
+    }
 
                         for (let i = 0; i < levels.length; i++) {
                             let item = levels[i];
@@ -701,8 +715,15 @@ async getStreams(type, id, configBase64, host) {
                 });
                 directAdded = true;
             } else if (config?.useDirect !== false) {
-            let auth = await engine.authenticate(config, config.proxy);
-            if (auth) {
+let auth = await engine.authenticate(config, config.proxy);
+
+// ✅ CORREÇÃO: Se o auth falhar (ou estiver morto), limpa e tenta de novo
+if (!auth) {
+    engine.invalidateAuth(config);
+    auth = await engine.authenticate(config, config.proxy);
+}
+
+if (auth) {
                 const linkCacheKey = `${config.url}_${config.mac || ''}_${type}_${realCmd}_${sNum || ''}`;
                 let cmdUrl = null;
 
