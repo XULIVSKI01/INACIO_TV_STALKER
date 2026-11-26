@@ -331,11 +331,31 @@ const addon = {
                 };
 
                 let cached = catalogCache[fullKey];
-                if (!cached || (Date.now() - cached.lastUpdate > CACHE_TTL)) {
-                    console.log(`[STALKER] A carregar páginas 1-5 em paralelo: ${type}/${effectiveGenre || 'all'}`);
-                    const [p1, p2, p3, p4, p5] = await Promise.all([fetchPage(1), fetchPage(2), fetchPage(3), fetchPage(4), fetchPage(5)]);
-                    const initial = [...p1, ...p2, ...p3, ...p4, ...p5];
-                    catalogCache[fullKey] = { data: initial, lastUpdate: Date.now(), complete: (p5.length === 0) };
+if (!cached || (Date.now() - cached.lastUpdate > CACHE_TTL)) {
+    console.log(`[STALKER] A carregar páginas 1-5 em paralelo: ${type}/${effectiveGenre || 'all'}`);
+    let [p1, p2, p3, p4, p5] = await Promise.all([fetchPage(1), fetchPage(2), fetchPage(3), fetchPage(4), fetchPage(5)]);
+    let initial = [...p1, ...p2, ...p3, ...p4, ...p5];
+
+    // ✅ A CORREÇÃO: Se vier vazio, o token morreu. Limpa a auth e tenta mais 1 vez!
+    if (initial.length === 0) {
+        console.log(`[STALKER] Catálogo vazio. Token expirou, a forçar nova autenticação...`);
+        engine.invalidateAuth(config);
+        const newAuth = await this.authenticate(config);
+        if (newAuth) {
+            // Re-fetch com o novo token
+            const fetchPageRetry = async (p) => {
+                try {
+                    const res = await axios.get(`${newAuth.api}type=${sType}&action=${sAct}${catP}&p=${p}${chCheckCat}&JsHttpRequest=1-0`, this.getAxiosOpts(config, { headers: newAuth.authData.headers, timeout: 10000 }));
+                    const raw = res.data?.js?.data || res.data?.js || [];
+                    return (Array.isArray(raw) ? raw : Object.values(raw)).filter(i => i && (i.id || i.cmd));
+                } catch(e) { return []; }
+            };
+            [p1, p2, p3, p4, p5] = await Promise.all([fetchPageRetry(1), fetchPageRetry(2), fetchPageRetry(3), fetchPageRetry(4), fetchPageRetry(5)]);
+            initial = [...p1, ...p2, ...p3, ...p4, ...p5];
+        }
+    }
+    
+    catalogCache[fullKey] = { data: initial, lastUpdate: Date.now(), complete: (p5.length === 0) };
                     cached = catalogCache[fullKey];
                     console.log(`[STALKER] Primeiras 5 páginas: ${initial.length} itens`);
 
