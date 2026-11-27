@@ -14,7 +14,7 @@ const CACHE_TTL = 10 * 60 * 1000;
 // ============================================================
 async function authenticate(config, proxyUrl = null) {
     const mac = (config.mac || "00:1A:79:00:00:00").toUpperCase();
-    const cleanBase = config.url.trim().replace(/\/$/, "");
+    const cleanBase = config.url.trim().replace(/\/+$/, "").replace(/\/c$/i, "");
     const cacheKey = `auth_${cleanBase}_${mac}`;
 
     if (authCache.has(cacheKey)) {
@@ -125,18 +125,17 @@ function invalidateAuth(config) {
 async function createStreamLink(auth, config, stalkerCmd, type, sNum = null) {
     const cmdType = (type === "movie" || type === "series") ? "vod" : "itv";
     const seriesParam = sNum ? `&series=${sNum}` : '';
-    const chCheck = type === "tv" ? "&force_ch_link_check=1" : "";
+    const chCheck = type === "tv" ? "&force_ch_link_check=0" : "";
     const realCmd = stalkerCmd;
 
     const opts = getAxiosOpts(config, { headers: auth.authData.headers, timeout: 5000 }, config.proxy);
 
-    // Directo TV: o link curto deste portal morre ao 1–2 min e a TV já não volta cá.
-    // long_lived primeiro. O curto só se o portal não devolver o longo.
     const linkVariant = (useVideoId, longLived) => {
         const key = useVideoId ? 'video_id' : 'cmd';
         const lived = longLived ? '&long_lived=1' : '';
         return { url: () => `${auth.api}type=${cmdType}&action=create_link&${key}=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}${lived}&JsHttpRequest=1-0` };
     };
+    // Neste portal o link sem long_lived é /play/link/ e morre aos 2 min.
     const variants = type === 'tv'
         ? [linkVariant(false, true), linkVariant(true, true), linkVariant(false, false), linkVariant(true, false)]
         : [linkVariant(false, false), linkVariant(false, true), linkVariant(true, false), linkVariant(true, true)];
