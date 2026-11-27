@@ -120,7 +120,7 @@ const addon = {
         const lists = this.parseConfig(configBase64);
         let catalogs = [];
         await Promise.all(lists.map(async (l, i) => {
-            let tvG = []; let movG = []; let serG = [];
+            let tvG = ["Predefinido"]; let movG = ["Predefinido"]; let serG = ["Predefinido"];
             try {
                 if (l.type === 'xtream') {
                     const b = l.url.trim().replace(/\/$/, "");
@@ -136,53 +136,39 @@ const addon = {
                 } else {
                     const auth = await this.authenticate(l);
                     if (auth) {
-                        const fetchSt = async (t, actions) => {
-                            const read = (raw) => {
-                                if (typeof raw === 'string') {
-                                    try { raw = JSON.parse(raw.replace(/\/\*[\s\S]*?\*\//g, "").trim()); } catch (e) { return []; }
+                        const fetchSt = async (t, a, fb) => {
+                            try {
+                                let r;
+                                try {
+                                    r = await axios.get(`${auth.api}type=${t}&action=${a}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
+                                } catch (e) {
+                                    if (auth.apiAlt) {
+                                        r = await axios.get(`${auth.apiAlt}type=${t}&action=${a}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
+                                    } else throw e;
                                 }
-                                const data = raw?.js?.data || raw?.js || [];
-                                if (data && !Array.isArray(data) && data.error) return [];
-                                const items = Array.isArray(data) ? data : Object.values(data);
-                                return items.map(g => (g && typeof g === 'object') ? (g.title || g.name) : null).filter(Boolean);
-                            };
-                            const apis = [auth.api, auth.apiAlt].filter(Boolean);
-                            for (const action of actions) {
-                                for (const api of apis) {
+                                let items = r.data?.js?.data || r.data?.js || [];
+                                if ((!items || (Array.isArray(items) && items.length === 0)) && fb) {
                                     try {
-                                        const r = await axios.get(
-                                            `${api}type=${t}&action=${action}&JsHttpRequest=1-0`,
-                                            this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 15000 })
-                                        );
-                                        const names = read(r.data);
-                                        if (names.length) return names;
-                                    } catch (e) {}
+                                        r = await axios.get(`${auth.api}type=${t}&action=${fb}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
+                                    } catch (e) {
+                                        if (auth.apiAlt) {
+                                            r = await axios.get(`${auth.apiAlt}type=${t}&action=${fb}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
+                                        } else throw e;
+                                    }
+                                    items = r.data?.js?.data || r.data?.js || [];
                                 }
-                            }
-                            return [];
+                                return (Array.isArray(items) ? items : Object.values(items)).map(g => g.title || g.name).filter(Boolean);
+                            } catch(e) { return []; }
                         };
-                        const g1 = await fetchSt('itv', ['get_genres', 'get_categories']);
-                        const g2 = await fetchSt('vod', ['get_categories', 'get_genres']);
-                        const g3 = await fetchSt('series', ['get_categories', 'get_genres']);
+                        const [g1, g2, g3] = await Promise.all([
+                            fetchSt('itv', 'get_genres', 'get_categories'), 
+                            fetchSt('vod', 'get_categories', 'get_genres'), 
+                            fetchSt('series', 'get_categories', 'get_genres')
+                        ]);
                         tvG = tvG.concat(g1); movG = movG.concat(g2); serG = serG.concat(g3);
                     }
                 }
             } catch(e) { console.error(`[MANIFEST ERROR] Falha ao carregar categorias da lista ${i}:`, e.message); }
-
-            const visibleCategories = (list) => {
-                const names = [...new Set((list || []).map(c => String(c || '').trim()).filter(Boolean))];
-                const key = (c) => c.toLowerCase();
-                const hasAll = names.some(c => ['all', 'todos', 'todas', '*'].includes(key(c)));
-                return names.filter(c => {
-                    const k = key(c);
-                    if (k === 'predefinido') return false;
-                    if (k === 'default' && hasAll) return false;
-                    return true;
-                });
-            };
-            tvG = visibleCategories(tvG);
-            movG = visibleCategories(movG);
-            serG = visibleCategories(serG);
             
             if (l.selectedCategories) {
                 const sel = l.selectedCategories;
@@ -227,7 +213,7 @@ const addon = {
         }));
         const addonName = lists.map(l => l.name).filter(Boolean).join(" + ") || "XuloV Hub";
         const m = { id: "org.xulov.stalker", version: "5.3.0", name: addonName, resources: ["catalog", "stream", "meta"], types: ["tv", "movie", "series"], idPrefixes: ["xlv:"], catalogs: catalogs };
-        if (catalogs.length > 0) setCache(cacheKey, m, 60); 
+        setCache(cacheKey, m, 60); 
         console.log("[MANIFEST] Manifest gerado com sucesso.");
         return m;
     },
