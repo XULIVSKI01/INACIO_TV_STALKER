@@ -219,197 +219,198 @@ const addon = {
     },
     
     async getCatalog(type, id, extra, configBase64) {
-        const normalize = (str) => (str || '').replace(/\s+/g, ' ').trim().toLowerCase();
-        console.log(`[CATALOG] Pedido: type=${type}, id=${id}, genre=${extra.genre || 'N/A'}, skip=${extra.skip || 0}`);
-        const lists = this.parseConfig(configBase64);
-        const lIdx = parseInt(id.split('_')[1]);
-        const config = lists[lIdx]; if (!config) return { metas: [] };
+    const normalize = (str) => (str || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    console.log(`[CATALOG] Pedido: type=${type}, id=${id}, genre=${extra.genre || 'N/A'}, skip=${extra.skip || 0}`);
+    const lists = this.parseConfig(configBase64);
+    const lIdx = parseInt(id.split('_')[1]);
+    const config = lists[lIdx]; if (!config) return { metas: [] };
 
-        const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
-        const skip = parseInt(extra.skip) || 0;
-        let effectiveGenre = (extra.genre === 'Predefinido' || extra.genre === 'Default') ? null : extra.genre;
-        if (effectiveGenre && config.selectedCategories) {
-            const listType = type === 'tv' ? 'tv' : (type === 'movie' ? 'movie' : 'series');
-            const items = config.selectedCategories[listType] || [];
-            for (const item of items) {
-                if (item && typeof item === 'object' && item.original) {
-                    const custom = (item.custom && item.custom.trim()) ? item.custom.trim() : item.original;
-                    if (custom === effectiveGenre) {
-                        effectiveGenre = item.original;
-                        break;
-                    }
+    const listSig = crypto.createHash('md5').update(config.url).digest('hex').substring(0,4);
+    const skip = parseInt(extra.skip) || 0;
+    let effectiveGenre = (extra.genre === 'Predefinido' || extra.genre === 'Default') ? null : extra.genre;
+    if (effectiveGenre && config.selectedCategories) {
+        const listType = type === 'tv' ? 'tv' : (type === 'movie' ? 'movie' : 'series');
+        const items = config.selectedCategories[listType] || [];
+        for (const item of items) {
+            if (item && typeof item === 'object' && item.original) {
+                const custom = (item.custom && item.custom.trim()) ? item.custom.trim() : item.original;
+                if (custom === effectiveGenre) {
+                    effectiveGenre = item.original;
+                    break;
                 }
             }
         }
-        let metas = [];
-        try {
-            if (config.type === 'm3u') {
-                const channels = await parseM3U(config.m3uUrl, config);
-                const genre = effectiveGenre;
-                const filtered = genre ? channels.filter(c => c.group === genre) : channels;
-                const pageItems = filtered.slice(skip, skip + 100);
-                metas = pageItems.map((c) => ({
-                    id: `xlv:${lIdx}_${listSig}:${encodeURIComponent(c.url)}:${encodeURIComponent(c.name)}:${encodeURIComponent(c.logo || '')}`,
-                    name: c.name,
-                    type: 'tv',
-                    poster: c.logo,
-                    posterShape: 'landscape'
-                }));
-                return { metas };
-            }
-            if (config.type === 'xtream') {
-                const b = config.url.trim().replace(/\/$/, "");
-                const cacheKey = `xtream_${b}_${config.user}_${type}_${extra.genre || 'N/A'}`;
-                let xtreamData;
-                if (catalogCache[cacheKey] && (Date.now() - catalogCache[cacheKey].lastUpdate < CACHE_TTL)) {
-                    xtreamData = catalogCache[cacheKey].data;
-                } else {
-                    const api = `${b}/player_api.php?username=${encodeURIComponent(config.user)}&password=${encodeURIComponent(config.pass)}`;
-                    let act = type === "tv" ? "get_live_streams" : (type === "movie" ? "get_vod_streams" : "get_series");
-                    if (effectiveGenre) {
-                        const cAct = type === "tv" ? "get_live_categories" : (type === "movie" ? "get_vod_categories" : "get_series_categories");
-                        const cRes = await axios.get(`${api}&action=${cAct}`, this.getAxiosOpts(config, {timeout: 5000}));
-                        const cat = (cRes.data || []).find(c => normalize(c.category_name) === normalize(effectiveGenre));
-                        if (cat) act += `&category_id=${cat.category_id}`;
-                    }
-                    const res = await axios.get(`${api}&action=${act}`, this.getAxiosOpts(config, {timeout: 10000}));
-                    xtreamData = Array.isArray(res.data) ? res.data : [];
-                    catalogCache[cacheKey] = { data: xtreamData, lastUpdate: Date.now() };
-                }
-                metas = xtreamData.slice(skip, skip + 100).map(item => ({
-                    id: `xlv:${lIdx}_${listSig}:${item.stream_id || item.series_id}${type === 'movie' ? '.' + (item.container_extension || 'mp4') : ''}:${encodeURIComponent(item.name || item.title)}:${encodeURIComponent(item.stream_icon || item.cover || '')}`,
-                    name: item.name || item.title, type: type, poster: item.stream_icon || item.cover, posterShape: type === "tv" ? "landscape" : "poster"
-                }));
-            } else {
-    const sType = type === "tv" ? "itv" : (type === "movie" ? "vod" : "series");
-    const auth = await this.authenticate(config);
-    if (!auth) return { metas: [] };
-
-    const safeApi = auth.api;
-    const altApi = auth.apiAlt || null;
-
-    let catP = "";
-    if (effectiveGenre) {
-        const actions = sType === "itv" ? ["get_genres", "get_categories"] : ["get_categories", "get_genres"];
-        let cats = [];
-        for (const act of actions) {
-            try {
-                let cRes;
-                try {
-                    cRes = await axios.get(`${safeApi}type=${sType}&action=${act}&JsHttpRequest=1-0`, this.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 5000 }));
-                } catch (e) {
-                    if (altApi) cRes = await axios.get(`${altApi}type=${sType}&action=${act}&JsHttpRequest=1-0`, this.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 5000 }));
-                    else continue;
-                }
-                const found = cRes.data?.js?.data || cRes.data?.js || [];
-                const tempCats = Array.isArray(found) ? found : Object.values(found);
-                if (tempCats.length > 0) { cats = tempCats; break; }
-            } catch(e) { continue; }
-        }
-        const cat = cats.find(c => normalize(c.title || c.name) === normalize(effectiveGenre));
-        if (cat) catP = sType === "itv" ? `&genre=${cat.id}` : `&category=${cat.id}`;
     }
-
-    const sAct = "get_ordered_list";
-    const chCheckCat = type === "tv" ? "&force_ch_link_check=1" : "";
-    const fullKey = `stalker_full_${config.url}_${type}_${effectiveGenre || 'all'}`;
-
-    // ✅ SISTEMA ANTI-RAJADA (Se o Stremio pedir 3 vezes, o addon só vai ao portal 1 vez)
-    if (!global.pendingCatalogRequests) global.pendingCatalogRequests = {};
-    if (global.pendingCatalogRequests[fullKey]) {
-        console.log(`[STALKER] Pedido pendente para ${fullKey}. A aguardar resposta...`);
-        try { return await global.pendingCatalogRequests[fullKey]; } catch(e) { return { metas: [] }; }
-    }
-
-    const fetchPromise = (async () => {
-        const self = this;
-        const fetchPage = async (p, customAuth = null) => {
-            const currentAuth = customAuth || auth;
-            const currentApi = currentAuth.api;
-            try {
-                let res;
-                try {
-                    res = await axios.get(`${currentApi}type=${sType}&action=${sAct}${catP}&p=${p}${chCheckCat}&JsHttpRequest=1-0`, self.getAxiosOpts(config, { headers: currentAuth.authData.headers, timeout: 6000 }));
-                } catch (e) {
-                    if (altApi) {
-                        res = await axios.get(`${altApi}type=${sType}&action=${sAct}${catP}&p=${p}${chCheckCat}&JsHttpRequest=1-0`, self.getAxiosOpts(config, { headers: currentAuth.authData.headers, timeout: 6000 }));
-                    } else return [];
-                }
-                const raw = res.data?.js?.data || res.data?.js || [];
-                return (Array.isArray(raw) ? raw : Object.values(raw)).filter(i => i && (i.id || i.cmd));
-            } catch(e) { return []; }
-        };
-
-        let cached = catalogCache[fullKey];
-        if (cached && cached.data && cached.data.length === 0) {
-            delete catalogCache[fullKey]; 
-            cached = null;
+    let metas = [];
+    try {
+        if (config.type === 'm3u') {
+            const channels = await parseM3U(config.m3uUrl, config);
+            const genre = effectiveGenre;
+            const filtered = genre ? channels.filter(c => c.group === genre) : channels;
+            const pageItems = filtered.slice(skip, skip + 100);
+            metas = pageItems.map((c) => ({
+                id: `xlv:${lIdx}_${listSig}:${encodeURIComponent(c.url)}:${encodeURIComponent(c.name)}:${encodeURIComponent(c.logo || '')}`,
+                name: c.name,
+                type: 'tv',
+                poster: c.logo,
+                posterShape: 'landscape'
+            }));
+            return { metas };
         }
-
-        if (!cached || (Date.now() - cached.lastUpdate > CACHE_TTL)) {
-            console.log(`[STALKER] A carregar páginas iniciais: ${type}/${effectiveGenre || 'all'}`);
-            
-            // Pede apenas as 3 primeiras páginas (rápido)
-            let [p1, p2, p3] = await Promise.all([fetchPage(1), fetchPage(2), fetchPage(3)]);
-            let initial = [...p1, ...p2, ...p3];
-
-            // Se vier vazio, o token pode ter morrido. Limpa e tenta 1 vez.
-            if (initial.length === 0) {
-                console.log(`[STALKER] Catálogo vazio. A forçar nova autenticação...`);
-                engine.invalidateAuth(config);
-                const newAuth = await this.authenticate(config);
-                if (newAuth) {
-                    [p1, p2, p3] = await Promise.all([fetchPage(1, newAuth), fetchPage(2, newAuth), fetchPage(3, newAuth)]);
-                    initial = [...p1, ...p2, ...p3];
-                }
-            }
-            
-            // Só guarda no cache se encontrou algo, para não "envenenar" a cache
-            if (initial.length > 0) {
-                catalogCache[fullKey] = { data: initial, lastUpdate: Date.now(), complete: false };
-                cached = catalogCache[fullKey];
+        if (config.type === 'xtream') {
+            const b = config.url.trim().replace(/\/$/, "");
+            const cacheKey = `xtream_${b}_${config.user}_${type}_${extra.genre || 'N/A'}`;
+            let xtreamData;
+            if (catalogCache[cacheKey] && (Date.now() - catalogCache[cacheKey].lastUpdate < CACHE_TTL)) {
+                xtreamData = catalogCache[cacheKey].data;
             } else {
-                return { metas: [] }; // Devolve vazio, mas não guarda em cache!
+                const api = `${b}/player_api.php?username=${encodeURIComponent(config.user)}&password=${encodeURIComponent(config.pass)}`;
+                let act = type === "tv" ? "get_live_streams" : (type === "movie" ? "get_vod_streams" : "get_series");
+                if (effectiveGenre) {
+                    const cAct = type === "tv" ? "get_live_categories" : (type === "movie" ? "get_vod_categories" : "get_series_categories");
+                    const cRes = await axios.get(`${api}&action=${cAct}`, this.getAxiosOpts(config, {timeout: 5000}));
+                    const cat = (cRes.data || []).find(c => normalize(c.category_name) === normalize(effectiveGenre));
+                    if (cat) act += `&category_id=${cat.category_id}`;
+                }
+                const res = await axios.get(`${api}&action=${act}`, this.getAxiosOpts(config, {timeout: 10000}));
+                xtreamData = Array.isArray(res.data) ? res.data : [];
+                catalogCache[cacheKey] = { data: xtreamData, lastUpdate: Date.now() };
+            }
+            metas = xtreamData.slice(skip, skip + 100).map(item => ({
+                id: `xlv:${lIdx}_${listSig}:${item.stream_id || item.series_id}${type === 'movie' ? '.' + (item.container_extension || 'mp4') : ''}:${encodeURIComponent(item.name || item.title)}:${encodeURIComponent(item.stream_icon || item.cover || '')}`,
+                name: item.name || item.title, type: type, poster: item.stream_icon || item.cover, posterShape: type === "tv" ? "landscape" : "poster"
+            }));
+        } else {
+            const sType = type === "tv" ? "itv" : (type === "movie" ? "vod" : "series");
+            const auth = await this.authenticate(config);
+            if (!auth) return { metas: [] };
+
+            const safeApi = auth.api;
+            const altApi = auth.apiAlt || null;
+
+            let catP = "";
+            if (effectiveGenre) {
+                const actions = sType === "itv" ? ["get_genres", "get_categories"] : ["get_categories", "get_genres"];
+                let cats = [];
+                for (const act of actions) {
+                    try {
+                        let cRes;
+                        try {
+                            cRes = await axios.get(`${safeApi}type=${sType}&action=${act}&JsHttpRequest=1-0`, this.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 5000 }));
+                        } catch (e) {
+                            if (altApi) cRes = await axios.get(`${altApi}type=${sType}&action=${act}&JsHttpRequest=1-0`, this.getAxiosOpts(config, { headers: auth.authData.headers, timeout: 5000 }));
+                            else continue;
+                        }
+                        const found = cRes.data?.js?.data || cRes.data?.js || [];
+                        const tempCats = Array.isArray(found) ? found : Object.values(found);
+                        if (tempCats.length > 0) { cats = tempCats; break; }
+                    } catch(e) { continue; }
+                }
+                const cat = cats.find(c => normalize(c.title || c.name) === normalize(effectiveGenre));
+                if (cat) catP = sType === "itv" ? `&genre=${cat.id}` : `&category=${cat.id}`;
             }
 
-            // O resto das páginas carrega no fundo
-            if (initial.length > 0) {
-                (async () => {
-                    const more = [];
-                    for (let p = 4; p <= 50; p++) {
-                        const items = await fetchPage(p);
-                        if (items.length === 0) break;
-                        more.push(...items);
-                        if (catalogCache[fullKey]) {
-                            catalogCache[fullKey].data = initial.concat(more);
+            const sAct = "get_ordered_list";
+            const chCheckCat = type === "tv" ? "&force_ch_link_check=1" : "";
+            const fullKey = `stalker_full_${config.url}_${type}_${effectiveGenre || 'all'}`;
+
+            if (!global.pendingCatalogRequests) global.pendingCatalogRequests = {};
+            if (global.pendingCatalogRequests[fullKey]) {
+                console.log(`[STALKER] Pedido pendente para ${fullKey}. A aguardar resposta...`);
+                try { return await global.pendingCatalogRequests[fullKey]; } catch(e) { return { metas: [] }; }
+            }
+
+            const fetchPromise = (async () => {
+                const self = this;
+                const fetchPage = async (p, customAuth = null) => {
+                    const currentAuth = customAuth || auth;
+                    const currentApi = currentAuth.api;
+                    try {
+                        let res;
+                        try {
+                            res = await axios.get(`${currentApi}type=${sType}&action=${sAct}${catP}&p=${p}${chCheckCat}&JsHttpRequest=1-0`, self.getAxiosOpts(config, { headers: currentAuth.authData.headers, timeout: 6000 }));
+                        } catch (e) {
+                            if (altApi) {
+                                res = await axios.get(`${altApi}type=${sType}&action=${sAct}${catP}&p=${p}${chCheckCat}&JsHttpRequest=1-0`, self.getAxiosOpts(config, { headers: currentAuth.authData.headers, timeout: 6000 }));
+                            } else return [];
+                        }
+                        const raw = res.data?.js?.data || res.data?.js || [];
+                        return (Array.isArray(raw) ? raw : Object.values(raw)).filter(i => i && (i.id || i.cmd));
+                    } catch(e) { return []; }
+                };
+
+                let cached = catalogCache[fullKey];
+                if (cached && cached.data && cached.data.length === 0) {
+                    delete catalogCache[fullKey]; 
+                    cached = null;
+                }
+
+                if (!cached || (Date.now() - cached.lastUpdate > CACHE_TTL)) {
+                    console.log(`[STALKER] A carregar páginas iniciais: ${type}/${effectiveGenre || 'all'}`);
+                    
+                    let [p1, p2, p3] = await Promise.all([fetchPage(1), fetchPage(2), fetchPage(3)]);
+                    let initial = [...p1, ...p2, ...p3];
+
+                    if (initial.length === 0) {
+                        console.log(`[STALKER] Catálogo vazio. A forçar nova autenticação...`);
+                        engine.invalidateAuth(config);
+                        const newAuth = await this.authenticate(config);
+                        if (newAuth) {
+                            [p1, p2, p3] = await Promise.all([fetchPage(1, newAuth), fetchPage(2, newAuth), fetchPage(3, newAuth)]);
+                            initial = [...p1, ...p2, ...p3];
                         }
                     }
-                    if (catalogCache[fullKey]) catalogCache[fullKey].complete = true;
-                })();
+                    
+                    if (initial.length > 0) {
+                        catalogCache[fullKey] = { data: initial, lastUpdate: Date.now(), complete: false };
+                        cached = catalogCache[fullKey];
+                    } else {
+                        return { metas: [] }; 
+                    }
+
+                    if (initial.length > 0) {
+                        (async () => {
+                            const more = [];
+                            for (let p = 4; p <= 50; p++) {
+                                const items = await fetchPage(p);
+                                if (items.length === 0) break;
+                                more.push(...items);
+                                if (catalogCache[fullKey]) {
+                                    catalogCache[fullKey].data = initial.concat(more);
+                                }
+                            }
+                            if (catalogCache[fullKey]) catalogCache[fullKey].complete = true;
+                        })();
+                    }
+                }
+
+                const metas = (cached.data || []).slice(skip, skip + 100).map(m => {
+                    let targetId = m.cmd || m.id;
+                    return {
+                        id: `xlv:${lIdx}_${listSig}:${encodeURIComponent(targetId)}:${encodeURIComponent(m.name || m.title)}:${encodeURIComponent(m.logo || m.screenshot_uri || '')}`,
+                        name: m.name || m.title,
+                        type: type,
+                        poster: m.logo || m.screenshot_uri,
+                        posterShape: type === "tv" ? "landscape" : "poster"
+                    };
+                });
+                
+                return { metas };
+            })();
+
+            global.pendingCatalogRequests[fullKey] = fetchPromise;
+            try {
+                return await fetchPromise;
+            } finally {
+                delete global.pendingCatalogRequests[fullKey];
             }
         }
-
-        const metas = (cached.data || []).slice(skip, skip + 100).map(m => {
-            let targetId = m.cmd || m.id;
-            return {
-                id: `xlv:${lIdx}_${listSig}:${encodeURIComponent(targetId)}:${encodeURIComponent(m.name || m.title)}:${encodeURIComponent(m.logo || m.screenshot_uri || '')}`,
-                name: m.name || m.title,
-                type: type,
-                poster: m.logo || m.screenshot_uri,
-                posterShape: type === "tv" ? "landscape" : "poster"
-            };
-        });
-        
-        return { metas };
-    })();
-
-    global.pendingCatalogRequests[fullKey] = fetchPromise;
-    try {
-        return await fetchPromise;
-    } finally {
-        delete global.pendingCatalogRequests[fullKey];
+    } catch (e) { 
+        console.error(`[CATALOG ERROR] Erro ao carregar catálogo:`, e.message); 
+        if (e.response && e.response.status === 400) console.error(`[DEBUG 400] O portal rejeitou este URL exato:`, e.config?.url || e.response?.config?.url);
     }
-            } 
+    return { metas };
+},
 
     async getMeta(type, id, configBase64) {
         console.log(`[META] Pedido: type=${type}, id=${id}`);
