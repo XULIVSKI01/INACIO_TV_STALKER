@@ -14,7 +14,7 @@ const CACHE_TTL = 10 * 60 * 1000;
 // ============================================================
 async function authenticate(config, proxyUrl = null) {
     const mac = (config.mac || "00:1A:79:00:00:00").toUpperCase();
-    const cleanBase = config.url.trim().replace(/\/$/, "");
+    const cleanBase = config.url.trim().replace(/\/+$/, "").replace(/\/c$/i, "");
     const cacheKey = `auth_${cleanBase}_${mac}`;
 
     if (authCache.has(cacheKey)) {
@@ -40,7 +40,7 @@ async function authenticate(config, proxyUrl = null) {
         'Cookie': `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe/Lisbon;`
     };
 
-    const paths = ['/c/portal.php', '/portal.php', '/server/load.php', '/stalker_portal/server/load.php'];
+    const paths = ['/c/portal.php', '/portal.php', '/server/load.php', '/stalker_portal/server/load.php', '/stalker_portal/c/portal.php'];
 
     console.log(`[STB-EMU MODE] Tentando enganar portal: ${cleanBase}`);
 
