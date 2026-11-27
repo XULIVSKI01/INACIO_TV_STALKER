@@ -155,7 +155,7 @@ function normalizePlayUrl(url, portalUrl) {
 
 function isLiveSingleFetch(req) {
     const ua = req.headers['user-agent'] || '';
-    return /web0s|webos|netcast|lge|lg browser|vlc|mpv|lavf|libmpv/i.test(ua);
+    return /tizen|samsung|smart-tv|smarttv|web0s|webos|netcast|lge|lg browser|vlc|mpv|lavf|libmpv/i.test(ua);
 }
 
 function directProbe(res) {
@@ -222,7 +222,7 @@ function resolveDirectTicket(t) {
     const age = t.urlAt ? Date.now() - t.urlAt : Infinity;
     const shortPlay = /\/play\/link\/|play_token|\/play\/live\.php/i.test(String(t.url || ''));
     if (t.url && !shortPlay) return Promise.resolve(t.url);
-    if (t.url && shortPlay && age < 15000) return Promise.resolve(t.url);
+    if (t.url && shortPlay && age < 10000) return Promise.resolve(t.url); // MUDOU DE 15000 PARA 10000
     if (!t.pending) {
         t.url = null;
         t.pending = buildDirectUrl(t).finally(() => { t.pending = null; });
@@ -1558,23 +1558,29 @@ app.post("/get-categories", async (req, res) => {
                     const apiBase = auth.api;
 
                     const fetchStalkerCategories = async (type, action) => {
-                        try {
-                            const resp = await axios.get(
-                                `${apiBase}type=${type}&action=${action}&JsHttpRequest=1-0`,
-                                opts
-                            );
-                            const data = resp.data?.js?.data || resp.data?.js || [];
-                            const items = Array.isArray(data) ? data : Object.values(data);
-                            return items.map(g => g.title || g.name).filter(Boolean);
-                        } catch (e) {
-                            return [];
-                        }
-                    };
+    try {
+        const resp = await axios.get(
+            `${apiBase}type=${type}&action=${action}&JsHttpRequest=1-0`, // <-- SEM SN E SEM TOKEN
+            opts
+        );
+        const data = resp.data?.js?.data || resp.data?.js || [];
+        if (data && data.error) return []; // Se der erro, devolve vazio
+        const items = Array.isArray(data) ? data : Object.values(data);
+        return items.map(g => g.title || g.name).filter(Boolean);
+    } catch (e) {
+        return [];
+    }
+};
 
-                    [tvCategories, movieCategories, seriesCategories] = await Promise.all([
-                        fetchStalkerCategories('itv', 'get_genres'),
-                        fetchStalkerCategories('vod', 'get_categories'),
-                        fetchStalkerCategories('series', 'get_categories')
+// PEDIDOS SEQUENCIAIS (um de cada vez, sem Promise.all)
+tvCategories = await fetchStalkerCategories('itv', 'get_genres');
+if (tvCategories.length === 0) tvCategories = await fetchStalkerCategories('itv', 'get_categories');
+
+movieCategories = await fetchStalkerCategories('vod', 'get_categories');
+if (movieCategories.length === 0) movieCategories = await fetchStalkerCategories('vod', 'get_genres');
+
+seriesCategories = await fetchStalkerCategories('series', 'get_categories');
+if (seriesCategories.length === 0) seriesCategories = await fetchStalkerCategories('series', 'get_genres');
                     ]);
                 }
             } catch (e) {
