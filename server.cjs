@@ -1537,42 +1537,52 @@ app.post("/get-categories", async (req, res) => {
             try {
                 const auth = await engine.authenticate(listConfig, listConfig.proxy);
                 if (auth) {
-                    const opts = engine.getAxiosOpts(listConfig, { headers: auth.authData.headers, timeout: 5000 });
                     const apiBase = auth.api;
-
-                    const fetchStalkerCategories = async (type, action) => {
-                        try {
-                            const resp = await axios.get(
-                                `${apiBase}type=${type}&action=${action}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`,
-                                opts
-                            );
-                            const data = resp.data?.js?.data || resp.data?.js || [];
-                            const items = Array.isArray(data) ? data : Object.values(data);
-                            return items.map(g => g.title || g.name).filter(Boolean);
-                        } catch (e) {
-                            return [];
+                    const fetchStalkerCategories = async (type, actions) => {
+                        for (const action of actions) {
+                            try {
+                                const resp = await axios.get(
+                                    `${apiBase}type=${type}&action=${action}&JsHttpRequest=1-0`,
+                                    engine.getAxiosOpts(listConfig, { headers: auth.authData.headers, timeout: 15000 })
+                                );
+                                let raw = resp.data;
+                                if (typeof raw === 'string') {
+                                    try { raw = JSON.parse(raw.replace(/\/\*[\s\S]*?\*\//g, "").trim()); } catch (e) { raw = null; }
+                                }
+                                const data = raw?.js?.data || raw?.js || [];
+                                if (data && !Array.isArray(data) && data.error) continue;
+                                const items = Array.isArray(data) ? data : Object.values(data);
+                                const names = items.map(g => (g && typeof g === 'object') ? (g.title || g.name) : null).filter(Boolean);
+                                if (names.length) return names;
+                            } catch (e) {}
                         }
+                        return [];
                     };
 
-                    [tvCategories, movieCategories, seriesCategories] = await Promise.all([
-                        fetchStalkerCategories('itv', 'get_genres'),
-                        fetchStalkerCategories('vod', 'get_categories'),
-                        fetchStalkerCategories('series', 'get_categories')
-                    ]);
+                    tvCategories = await fetchStalkerCategories('itv', ['get_genres', 'get_categories']);
+                    movieCategories = await fetchStalkerCategories('vod', ['get_categories', 'get_genres']);
+                    seriesCategories = await fetchStalkerCategories('series', ['get_categories', 'get_genres']);
                 }
             } catch (e) {
                 console.error("Erro Stalker ao obter categorias:", e.message);
             }
         }
 
-       // Remove categorias indesejadas (ignorando espaços e capitalização)
-const isUndesired = (cat) => {
-    const clean = (cat || '').trim().toLowerCase();
-    return clean === 'predefinido' || clean === 'default';
+       // Tira Predefinido (aba falsa) e Default só quando o portal já mandou All
+const visibleCategories = (list) => {
+    const names = [...new Set((list || []).map(c => String(c || '').trim()).filter(Boolean))];
+    const key = (c) => c.toLowerCase();
+    const hasAll = names.some(c => ['all', 'todos', 'todas', '*'].includes(key(c)));
+    return names.filter(c => {
+        const k = key(c);
+        if (k === 'predefinido') return false;
+        if (k === 'default' && hasAll) return false;
+        return true;
+    });
 };
-tvCategories = tvCategories.filter(cat => !isUndesired(cat));
-movieCategories = movieCategories.filter(cat => !isUndesired(cat));
-seriesCategories = seriesCategories.filter(cat => !isUndesired(cat));
+tvCategories = visibleCategories(tvCategories);
+movieCategories = visibleCategories(movieCategories);
+seriesCategories = visibleCategories(seriesCategories);
 
         res.json({
             tv: [...new Set(tvCategories)],
