@@ -81,7 +81,8 @@ async function sendKeepAlive(list) {
     }
 }
 
-// Loop background — a cada 2 minutos para cada portal conhecido
+// Directo TV: o vídeo não passa por aqui. Só um get_events curto,
+// senão este portal corta a sessão ao fim de 1–2 min.
 setInterval(async () => {
     for (const cfgB64 of global.recentConfigs) {
         try {
@@ -95,7 +96,7 @@ setInterval(async () => {
             }
         } catch(e) { /* ignorar */ }
     }
-}, 2 * 60 * 1000);   // 2 minutos
+}, 30 * 1000);
 
 const PORT = process.env.PORT || 7860;
 const app = express();
@@ -236,6 +237,7 @@ app.get('/live/:ticket', async (req, res) => {
         }
         if (isLiveSingleFetch(req)) {
             console.log(`[DIRECT] ${ticket} 302 direto (${(req.headers['user-agent'] || '').slice(0, 40)}) → ${url.substring(0, 80)}`);
+            if (t.kind === 'stalker' && t.config) sendKeepAlive(t.config).catch(() => {});
             return directRedirect(res, url);
         }
         if (!t.probed) {
@@ -246,6 +248,7 @@ app.get('/live/:ticket', async (req, res) => {
         if (!t.redirected) {
             t.redirected = true;
             console.log(`[DIRECT] ${ticket} 302 play → ${url.substring(0, 80)}`);
+            if (t.kind === 'stalker' && t.config) sendKeepAlive(t.config).catch(() => {});
             return directRedirect(res, url);
         }
         console.log(`[DIRECT] ${ticket} sonda extra, não abre segunda ligação`);
@@ -1537,52 +1540,42 @@ app.post("/get-categories", async (req, res) => {
             try {
                 const auth = await engine.authenticate(listConfig, listConfig.proxy);
                 if (auth) {
+                    const opts = engine.getAxiosOpts(listConfig, { headers: auth.authData.headers, timeout: 5000 });
                     const apiBase = auth.api;
-                    const fetchStalkerCategories = async (type, actions) => {
-                        for (const action of actions) {
-                            try {
-                                const resp = await axios.get(
-                                    `${apiBase}type=${type}&action=${action}&JsHttpRequest=1-0`,
-                                    engine.getAxiosOpts(listConfig, { headers: auth.authData.headers, timeout: 15000 })
-                                );
-                                let raw = resp.data;
-                                if (typeof raw === 'string') {
-                                    try { raw = JSON.parse(raw.replace(/\/\*[\s\S]*?\*\//g, "").trim()); } catch (e) { raw = null; }
-                                }
-                                const data = raw?.js?.data || raw?.js || [];
-                                if (data && !Array.isArray(data) && data.error) continue;
-                                const items = Array.isArray(data) ? data : Object.values(data);
-                                const names = items.map(g => (g && typeof g === 'object') ? (g.title || g.name) : null).filter(Boolean);
-                                if (names.length) return names;
-                            } catch (e) {}
+
+                    const fetchStalkerCategories = async (type, action) => {
+                        try {
+                            const resp = await axios.get(
+                                `${apiBase}type=${type}&action=${action}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`,
+                                opts
+                            );
+                            const data = resp.data?.js?.data || resp.data?.js || [];
+                            const items = Array.isArray(data) ? data : Object.values(data);
+                            return items.map(g => g.title || g.name).filter(Boolean);
+                        } catch (e) {
+                            return [];
                         }
-                        return [];
                     };
 
-                    tvCategories = await fetchStalkerCategories('itv', ['get_genres', 'get_categories']);
-                    movieCategories = await fetchStalkerCategories('vod', ['get_categories', 'get_genres']);
-                    seriesCategories = await fetchStalkerCategories('series', ['get_categories', 'get_genres']);
+                    [tvCategories, movieCategories, seriesCategories] = await Promise.all([
+                        fetchStalkerCategories('itv', 'get_genres'),
+                        fetchStalkerCategories('vod', 'get_categories'),
+                        fetchStalkerCategories('series', 'get_categories')
+                    ]);
                 }
             } catch (e) {
                 console.error("Erro Stalker ao obter categorias:", e.message);
             }
         }
 
-       // Tira Predefinido (aba falsa) e Default só quando o portal já mandou All
-const visibleCategories = (list) => {
-    const names = [...new Set((list || []).map(c => String(c || '').trim()).filter(Boolean))];
-    const key = (c) => c.toLowerCase();
-    const hasAll = names.some(c => ['all', 'todos', 'todas', '*'].includes(key(c)));
-    return names.filter(c => {
-        const k = key(c);
-        if (k === 'predefinido') return false;
-        if (k === 'default' && hasAll) return false;
-        return true;
-    });
+       // Remove categorias indesejadas (ignorando espaços e capitalização)
+const isUndesired = (cat) => {
+    const clean = (cat || '').trim().toLowerCase();
+    return clean === 'predefinido' || clean === 'default';
 };
-tvCategories = visibleCategories(tvCategories);
-movieCategories = visibleCategories(movieCategories);
-seriesCategories = visibleCategories(seriesCategories);
+tvCategories = tvCategories.filter(cat => !isUndesired(cat));
+movieCategories = movieCategories.filter(cat => !isUndesired(cat));
+seriesCategories = seriesCategories.filter(cat => !isUndesired(cat));
 
         res.json({
             tv: [...new Set(tvCategories)],
