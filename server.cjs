@@ -81,8 +81,7 @@ async function sendKeepAlive(list) {
     }
 }
 
-// Directo TV: o vídeo não passa por aqui. Só um get_events curto,
-// senão este portal corta a sessão ao fim de 1–2 min.
+// Loop background — a cada 2 minutos para cada portal conhecido
 setInterval(async () => {
     for (const cfgB64 of global.recentConfigs) {
         try {
@@ -188,27 +187,44 @@ async function buildDirectUrl(t) {
         raw = t.direct;
     } else {
         const cleaned = String(t.cmd || '').trim().replace(/^['"`]?(ffrt\d*|ffmpeg|rtmp)['"`]?\s+/i, '').trim();
-        const alreadyFinal = /^https?:\/\//i.test(cleaned) && !/localhost|127\.0\.0\.1/i.test(cleaned);
+        // /play/link/ deste portal expira aos 2 min. Não é um URL final.
+        const shortPlay = /\/play\/link\/|play_token|\/play\/live\.php/i.test(cleaned);
+        const alreadyFinal = /^https?:\/\//i.test(cleaned) && !/localhost|127\.0\.0\.1/i.test(cleaned) && !shortPlay;
         if (alreadyFinal) {
             raw = cleaned;
         } else {
+            let cmd = t.cmd;
+            if (shortPlay) {
+                const id = String(t.cmd).match(/\/play\/link\/([0-9a-f-]{8,})/i);
+                if (id) cmd = `ffmpeg http://localhost/ch/${id[1]}_`;
+            }
             let auth = await engine.authenticate(t.config, t.config.proxy);
-            if (auth) raw = await engine.createStreamLink(auth, t.config, t.cmd, t.type || 'tv', t.sNum || null);
+            if (auth) raw = await engine.createStreamLink(auth, t.config, cmd, t.type || 'tv', t.sNum || null);
+            if (!raw && cmd !== t.cmd) {
+                if (auth) raw = await engine.createStreamLink(auth, t.config, t.cmd, t.type || 'tv', t.sNum || null);
+            }
             if (!raw) {
                 engine.invalidateAuth(t.config);
                 auth = await engine.authenticate(t.config, t.config.proxy);
-                if (auth) raw = await engine.createStreamLink(auth, t.config, t.cmd, t.type || 'tv', t.sNum || null);
+                if (auth) raw = await engine.createStreamLink(auth, t.config, cmd, t.type || 'tv', t.sNum || null);
             }
         }
     }
     const url = normalizePlayUrl(raw, t.config && t.config.url);
-    if (url) t.url = url;
+    if (url) {
+        t.url = url;
+        t.urlAt = Date.now();
+    }
     return url;
 }
 
 function resolveDirectTicket(t) {
-    if (t.url) return Promise.resolve(t.url);
+    const age = t.urlAt ? Date.now() - t.urlAt : Infinity;
+    const shortPlay = /\/play\/link\/|play_token|\/play\/live\.php/i.test(String(t.url || ''));
+    if (t.url && !shortPlay) return Promise.resolve(t.url);
+    if (t.url && shortPlay && age < 15000) return Promise.resolve(t.url);
     if (!t.pending) {
+        t.url = null;
         t.pending = buildDirectUrl(t).finally(() => { t.pending = null; });
     }
     return t.pending;
@@ -237,7 +253,6 @@ app.get('/live/:ticket', async (req, res) => {
         }
         if (isLiveSingleFetch(req)) {
             console.log(`[DIRECT] ${ticket} 302 direto (${(req.headers['user-agent'] || '').slice(0, 40)}) → ${url.substring(0, 80)}`);
-            if (t.kind === 'stalker' && t.config) sendKeepAlive(t.config).catch(() => {});
             return directRedirect(res, url);
         }
         if (!t.probed) {
@@ -248,7 +263,6 @@ app.get('/live/:ticket', async (req, res) => {
         if (!t.redirected) {
             t.redirected = true;
             console.log(`[DIRECT] ${ticket} 302 play → ${url.substring(0, 80)}`);
-            if (t.kind === 'stalker' && t.config) sendKeepAlive(t.config).catch(() => {});
             return directRedirect(res, url);
         }
         console.log(`[DIRECT] ${ticket} sonda extra, não abre segunda ligação`);
@@ -1540,13 +1554,13 @@ app.post("/get-categories", async (req, res) => {
             try {
                 const auth = await engine.authenticate(listConfig, listConfig.proxy);
                 if (auth) {
-                    const opts = engine.getAxiosOpts(listConfig, { headers: auth.authData.headers, timeout: 5000 });
+                    const opts = engine.getAxiosOpts(listConfig, { headers: auth.authData.headers, timeout: 15000 });
                     const apiBase = auth.api;
 
                     const fetchStalkerCategories = async (type, action) => {
                         try {
                             const resp = await axios.get(
-                                `${apiBase}type=${type}&action=${action}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`,
+                                `${apiBase}type=${type}&action=${action}&JsHttpRequest=1-0`,
                                 opts
                             );
                             const data = resp.data?.js?.data || resp.data?.js || [];
