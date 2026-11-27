@@ -1,4 +1,4 @@
-/// 1° Repositorio addon.cjs – universal e estável
+// 1° Repositorio addon.cjs – universal e estável
 const axios = require("axios");
 const crypto = require("crypto");
 const https = require('https'); 
@@ -140,19 +140,19 @@ const addon = {
                             try {
                                 let r;
                                 try {
-                                    r = await axios.get(`${auth.api}type=${t}&action=${a}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
+                                    r = await axios.get(`${auth.api}type=${t}&action=${a}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 15000 }));
                                 } catch (e) {
                                     if (auth.apiAlt) {
-                                        r = await axios.get(`${auth.apiAlt}type=${t}&action=${a}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
+                                        r = await axios.get(`${auth.apiAlt}type=${t}&action=${a}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 15000 }));
                                     } else throw e;
                                 }
                                 let items = r.data?.js?.data || r.data?.js || [];
                                 if ((!items || (Array.isArray(items) && items.length === 0)) && fb) {
                                     try {
-                                        r = await axios.get(`${auth.api}type=${t}&action=${fb}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
+                                        r = await axios.get(`${auth.api}type=${t}&action=${fb}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 15000 }));
                                     } catch (e) {
                                         if (auth.apiAlt) {
-                                            r = await axios.get(`${auth.apiAlt}type=${t}&action=${fb}&sn=${auth.authData.sn}&token=${auth.token}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 5000 }));
+                                            r = await axios.get(`${auth.apiAlt}type=${t}&action=${fb}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 15000 }));
                                         } else throw e;
                                     }
                                     items = r.data?.js?.data || r.data?.js || [];
@@ -200,6 +200,7 @@ const addon = {
             const uniqueTv = [...new Set(tvG.filter(Boolean))];
             const uniqueMov = [...new Set(movG.filter(Boolean))];
             const uniqueSer = [...new Set(serG.filter(Boolean))];
+            console.log(`[MANIFEST] Lista ${i} categorias TV=${uniqueTv.length} filmes=${uniqueMov.length} séries=${uniqueSer.length}`);
 
             if (uniqueTv.length > 0) {
                 catalogs.push({ type: "tv", id: `cat_${i}`, name: l.name || `Lista ${i+1}`, extra: [{ name: "genre", options: uniqueTv }, { name: "skip" }] });
@@ -311,7 +312,7 @@ const addon = {
             }
 
             const sAct = "get_ordered_list";
-            const chCheckCat = type === "tv" ? "&force_ch_link_check=1" : "";
+            const chCheckCat = "";
             const fullKey = `stalker_full_${config.url}_${type}_${effectiveGenre || 'all'}`;
 
             if (!global.pendingCatalogRequests) global.pendingCatalogRequests = {};
@@ -386,6 +387,10 @@ const addon = {
 
                 const metas = (cached.data || []).slice(skip, skip + 100).map(m => {
                     let targetId = m.cmd || m.id;
+                    if (type === "tv" && /\/play\/link\/|play_token|\/play\/live\.php/i.test(String(targetId || ''))) {
+                        const linkId = String(targetId).match(/\/play\/link\/([0-9a-f-]{8,})/i);
+                        targetId = m.id ? `ffmpeg http://localhost/ch/${m.id}_` : (linkId ? `ffmpeg http://localhost/ch/${linkId[1]}_` : targetId);
+                    }
                     return {
                         id: `xlv:${lIdx}_${listSig}:${encodeURIComponent(targetId)}:${encodeURIComponent(m.name || m.title)}:${encodeURIComponent(m.logo || m.screenshot_uri || '')}`,
                         name: m.name || m.title,
