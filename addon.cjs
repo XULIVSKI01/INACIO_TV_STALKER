@@ -409,7 +409,7 @@ const addon = {
     } finally {
         delete global.pendingCatalogRequests[fullKey];
     }
-            }, 
+            } 
 
     async getMeta(type, id, configBase64) {
         console.log(`[META] Pedido: type=${type}, id=${id}`);
