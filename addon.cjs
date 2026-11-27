@@ -314,92 +314,102 @@ const addon = {
     const chCheckCat = type === "tv" ? "&force_ch_link_check=1" : "";
     const fullKey = `stalker_full_${config.url}_${type}_${effectiveGenre || 'all'}`;
 
-    const self = this;
-    const fetchPage = async (p, customAuth = null) => {
-        const currentAuth = customAuth || auth;
-        const currentApi = currentAuth.api;
-        try {
-            let res;
+    // ✅ SISTEMA ANTI-RAJADA (Se o Stremio pedir 3 vezes, o addon só vai ao portal 1 vez)
+    if (!global.pendingCatalogRequests) global.pendingCatalogRequests = {};
+    if (global.pendingCatalogRequests[fullKey]) {
+        console.log(`[STALKER] Pedido pendente para ${fullKey}. A aguardar resposta...`);
+        try { return await global.pendingCatalogRequests[fullKey]; } catch(e) { return { metas: [] }; }
+    }
+
+    const fetchPromise = (async () => {
+        const self = this;
+        const fetchPage = async (p, customAuth = null) => {
+            const currentAuth = customAuth || auth;
+            const currentApi = currentAuth.api;
             try {
-                res = await axios.get(`${currentApi}type=${sType}&action=${sAct}${catP}&p=${p}${chCheckCat}&JsHttpRequest=1-0`, self.getAxiosOpts(config, { headers: currentAuth.authData.headers, timeout: 10000 }));
-            } catch (e) {
-                if (altApi && !customAuth) {
-                    res = await axios.get(`${altApi}type=${sType}&action=${sAct}${catP}&p=${p}${chCheckCat}&JsHttpRequest=1-0`, self.getAxiosOpts(config, { headers: currentAuth.authData.headers, timeout: 10000 }));
-                } else return [];
-            }
-            const raw = res.data?.js?.data || res.data?.js || [];
-            return (Array.isArray(raw) ? raw : Object.values(raw)).filter(i => i && (i.id || i.cmd));
-        } catch(e) { return []; }
-    };
-
-    let cached = catalogCache[fullKey];
-    
-    // ✅ A CORREÇÃO: Se a cache for vazia, ignora-a e força nova pesquisa!
-    if (cached && cached.data && cached.data.length === 0) {
-        delete catalogCache[fullKey]; 
-        cached = null;
-    }
-
-    if (!cached || (Date.now() - cached.lastUpdate > CACHE_TTL)) {
-        console.log(`[STALKER] A carregar páginas 1-5 em paralelo: ${type}/${effectiveGenre || 'all'}`);
-        let [p1, p2, p3, p4, p5] = await Promise.all([fetchPage(1), fetchPage(2), fetchPage(3), fetchPage(4), fetchPage(5)]);
-        let initial = [...p1, ...p2, ...p3, ...p4, ...p5];
-
-        // ✅ SE VIER VAZIO, O TOKEN MORREU: Limpa auth, tenta de novo!
-        if (initial.length === 0) {
-            console.log(`[STALKER] Catálogo vazio. Token expirou, a forçar nova autenticação...`);
-            engine.invalidateAuth(config);
-            const newAuth = await this.authenticate(config);
-            if (newAuth) {
-                [p1, p2, p3, p4, p5] = await Promise.all([
-                    fetchPage(1, newAuth), fetchPage(2, newAuth), fetchPage(3, newAuth), fetchPage(4, newAuth), fetchPage(5, newAuth)
-                ]);
-                initial = [...p1, ...p2, ...p3, ...p4, ...p5];
-            }
-        }
-        
-        catalogCache[fullKey] = { data: initial, lastUpdate: Date.now(), complete: (p5.length === 0) };
-        cached = catalogCache[fullKey];
-        console.log(`[STALKER] Primeiras 5 páginas: ${initial.length} itens`);
-
-        if (!cached.complete && initial.length > 0) {
-            (async () => {
-                const more = [];
-                for (let p = 6; p <= 50; p++) {
-                    const items = await fetchPage(p);
-                    if (items.length === 0) break;
-                    more.push(...items);
-                    if (catalogCache[fullKey]) {
-                        catalogCache[fullKey].data = initial.concat(more);
-                    }
+                let res;
+                try {
+                    res = await axios.get(`${currentApi}type=${sType}&action=${sAct}${catP}&p=${p}${chCheckCat}&JsHttpRequest=1-0`, self.getAxiosOpts(config, { headers: currentAuth.authData.headers, timeout: 6000 }));
+                } catch (e) {
+                    if (altApi) {
+                        res = await axios.get(`${altApi}type=${sType}&action=${sAct}${catP}&p=${p}${chCheckCat}&JsHttpRequest=1-0`, self.getAxiosOpts(config, { headers: currentAuth.authData.headers, timeout: 6000 }));
+                    } else return [];
                 }
-                if (catalogCache[fullKey]) {
-                    catalogCache[fullKey].complete = true;
-                    console.log(`[STALKER] Background completo: ${catalogCache[fullKey].data.length} itens totais`);
-                }
-            })();
-        }
-    } else if (!cached.complete) {
-        console.log(`[STALKER] Cache parcial: ${cached.data.length} itens (background a carregar)`);
-    }
-
-    metas = (cached.data || []).slice(skip, skip + 100).map(m => {
-        let targetId = m.cmd || m.id;
-        return {
-            id: `xlv:${lIdx}_${listSig}:${encodeURIComponent(targetId)}:${encodeURIComponent(m.name || m.title)}:${encodeURIComponent(m.logo || m.screenshot_uri || '')}`,
-            name: m.name || m.title,
-            type: type,
-            poster: m.logo || m.screenshot_uri,
-            posterShape: type === "tv" ? "landscape" : "poster"
+                const raw = res.data?.js?.data || res.data?.js || [];
+                return (Array.isArray(raw) ? raw : Object.values(raw)).filter(i => i && (i.id || i.cmd));
+            } catch(e) { return []; }
         };
-    });
-}
-        } catch (e) { 
-            console.error(`[CATALOG ERROR] Erro ao carregar catálogo:`, e.message); 
-            if (e.response && e.response.status === 400) console.error(`[DEBUG 400] O portal rejeitou este URL exato:`, e.config?.url || e.response?.config?.url);
+
+        let cached = catalogCache[fullKey];
+        if (cached && cached.data && cached.data.length === 0) {
+            delete catalogCache[fullKey]; 
+            cached = null;
         }
+
+        if (!cached || (Date.now() - cached.lastUpdate > CACHE_TTL)) {
+            console.log(`[STALKER] A carregar páginas iniciais: ${type}/${effectiveGenre || 'all'}`);
+            
+            // Pede apenas as 3 primeiras páginas (rápido)
+            let [p1, p2, p3] = await Promise.all([fetchPage(1), fetchPage(2), fetchPage(3)]);
+            let initial = [...p1, ...p2, ...p3];
+
+            // Se vier vazio, o token pode ter morrido. Limpa e tenta 1 vez.
+            if (initial.length === 0) {
+                console.log(`[STALKER] Catálogo vazio. A forçar nova autenticação...`);
+                engine.invalidateAuth(config);
+                const newAuth = await this.authenticate(config);
+                if (newAuth) {
+                    [p1, p2, p3] = await Promise.all([fetchPage(1, newAuth), fetchPage(2, newAuth), fetchPage(3, newAuth)]);
+                    initial = [...p1, ...p2, ...p3];
+                }
+            }
+            
+            // Só guarda no cache se encontrou algo, para não "envenenar" a cache
+            if (initial.length > 0) {
+                catalogCache[fullKey] = { data: initial, lastUpdate: Date.now(), complete: false };
+                cached = catalogCache[fullKey];
+            } else {
+                return { metas: [] }; // Devolve vazio, mas não guarda em cache!
+            }
+
+            // O resto das páginas carrega no fundo
+            if (initial.length > 0) {
+                (async () => {
+                    const more = [];
+                    for (let p = 4; p <= 50; p++) {
+                        const items = await fetchPage(p);
+                        if (items.length === 0) break;
+                        more.push(...items);
+                        if (catalogCache[fullKey]) {
+                            catalogCache[fullKey].data = initial.concat(more);
+                        }
+                    }
+                    if (catalogCache[fullKey]) catalogCache[fullKey].complete = true;
+                })();
+            }
+        }
+
+        const metas = (cached.data || []).slice(skip, skip + 100).map(m => {
+            let targetId = m.cmd || m.id;
+            return {
+                id: `xlv:${lIdx}_${listSig}:${encodeURIComponent(targetId)}:${encodeURIComponent(m.name || m.title)}:${encodeURIComponent(m.logo || m.screenshot_uri || '')}`,
+                name: m.name || m.title,
+                type: type,
+                poster: m.logo || m.screenshot_uri,
+                posterShape: type === "tv" ? "landscape" : "poster"
+            };
+        });
+        
         return { metas };
-    },
+    })();
+
+    global.pendingCatalogRequests[fullKey] = fetchPromise;
+    try {
+        return await fetchPromise;
+    } finally {
+        delete global.pendingCatalogRequests[fullKey];
+    }
+            }, 
 
     async getMeta(type, id, configBase64) {
         console.log(`[META] Pedido: type=${type}, id=${id}`);
