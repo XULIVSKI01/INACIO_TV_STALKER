@@ -14,7 +14,7 @@ const CACHE_TTL = 10 * 60 * 1000;
 // ============================================================
 async function authenticate(config, proxyUrl = null) {
     const mac = (config.mac || "00:1A:79:00:00:00").toUpperCase();
-    const cleanBase = config.url.trim().replace(/\/+$/, "").replace(/\/c$/i, "");
+    const cleanBase = config.url.trim().replace(/\/$/, "");
     const cacheKey = `auth_${cleanBase}_${mac}`;
 
     if (authCache.has(cacheKey)) {
@@ -40,7 +40,7 @@ async function authenticate(config, proxyUrl = null) {
         'Cookie': `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe/Lisbon;`
     };
 
-    const paths = ['/c/portal.php', '/portal.php', '/server/load.php', '/stalker_portal/server/load.php', '/stalker_portal/c/portal.php'];
+    const paths = ['/c/portal.php', '/portal.php', '/server/load.php', '/stalker_portal/server/load.php'];
 
     console.log(`[STB-EMU MODE] Tentando enganar portal: ${cleanBase}`);
 
@@ -115,7 +115,7 @@ for (const path of classicPaths) {
 function invalidateAuth(config) {
     if (!config || !config.url) return;
     const mac = (config.mac || "00:1A:79:00:00:00").toUpperCase();
-    const cleanBase = String(config.url).trim().replace(/\/+$/, "").replace(/\/c$/i, "");
+    const cleanBase = String(config.url).trim().replace(/\/$/, "");
     authCache.delete(`auth_${cleanBase}_${mac}`);
 }
 
@@ -130,17 +130,16 @@ async function createStreamLink(auth, config, stalkerCmd, type, sNum = null) {
 
     const opts = getAxiosOpts(config, { headers: auth.authData.headers, timeout: 5000 }, config.proxy);
 
-    // Lista de variantes, por ordem de tentativa
-    const variants = [
-        // 1. cmd sem long_lived (o que funciona no HuggingFace)
-        { url: () => `${auth.api}type=${cmdType}&action=create_link&cmd=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&JsHttpRequest=1-0` },
-        // 2. cmd com long_lived
-        { url: () => `${auth.api}type=${cmdType}&action=create_link&cmd=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0` },
-        // 3. video_id sem long_lived
-        { url: () => `${auth.api}type=${cmdType}&action=create_link&video_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&JsHttpRequest=1-0` },
-        // 4. video_id com long_lived
-        { url: () => `${auth.api}type=${cmdType}&action=create_link&video_id=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}&long_lived=1&JsHttpRequest=1-0` }
-    ];
+    // Directo TV: o link curto deste portal morre ao 1–2 min e a TV já não volta cá.
+    // long_lived primeiro. O curto só se o portal não devolver o longo.
+    const linkVariant = (useVideoId, longLived) => {
+        const key = useVideoId ? 'video_id' : 'cmd';
+        const lived = longLived ? '&long_lived=1' : '';
+        return { url: () => `${auth.api}type=${cmdType}&action=create_link&${key}=${encodeURIComponent(realCmd)}${seriesParam}&sn=${auth.authData.sn}&token=${auth.token}${chCheck}${lived}&JsHttpRequest=1-0` };
+    };
+    const variants = type === 'tv'
+        ? [linkVariant(false, true), linkVariant(true, true), linkVariant(false, false), linkVariant(true, false)]
+        : [linkVariant(false, false), linkVariant(false, true), linkVariant(true, false), linkVariant(true, true)];
 
     // Séries — variantes adicionais
     if (type === "series") {
