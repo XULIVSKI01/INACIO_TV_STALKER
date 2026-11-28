@@ -114,110 +114,112 @@ const addon = {
     },
 
     async getManifest(configBase64) {
-        console.log("[MANIFEST] Pedido de Manifest recebido.");
-        const cacheKey = `manifest_${configBase64}`;
-        const cached = getCache(cacheKey); if (cached) return cached;
-        const lists = this.parseConfig(configBase64);
-        let catalogs = [];
-        await Promise.all(lists.map(async (l, i) => {
-            let tvG = ["Predefinido"]; let movG = ["Predefinido"]; let serG = ["Predefinido"];
-            try {
-                if (l.type === 'xtream') {
-                    const b = l.url.trim().replace(/\/$/, "");
-                    const api = `${b}/player_api.php?username=${encodeURIComponent(l.user)}&password=${encodeURIComponent(l.pass)}`;
-                    const f = async (a) => { 
+    async getManifest(configBase64) {
+    console.log("[MANIFEST] Pedido de Manifest recebido.");
+    const cacheKey = `manifest_${configBase64}`;
+    const cached = getCache(cacheKey); if (cached) return cached;
+    const lists = this.parseConfig(configBase64);
+    let catalogs = [];
+    await Promise.all(lists.map(async (l, i) => {
+        let tvG = []; let movG = []; let serG = []; // ✅ Removido "Predefinido"
+        try {
+            if (l.type === 'xtream') {
+                const b = l.url.trim().replace(/\/$/, "");
+                const api = `${b}/player_api.php?username=${encodeURIComponent(l.user)}&password=${encodeURIComponent(l.pass)}`;
+                const f = async (a) => { 
+                    try {
+                        const r = await axios.get(`${api}&action=${a}`, this.getAxiosOpts(l, { timeout: 5000 })); 
+                        return Array.isArray(r.data) ? r.data.map(g => g.category_name) : []; 
+                    } catch(e) { return []; }
+                };
+                const [c1, c2, c3] = await Promise.all([f('get_live_categories'), f('get_vod_categories'), f('get_series_categories')]);
+                tvG = tvG.concat(c1); movG = movG.concat(c2); serG = serG.concat(c3);
+            } else {
+                const auth = await this.authenticate(l);
+                if (auth) {
+                    const fetchSt = async (t, a, fb) => {
                         try {
-                            const r = await axios.get(`${api}&action=${a}`, this.getAxiosOpts(l, { timeout: 5000 })); 
-                            return Array.isArray(r.data) ? r.data.map(g => g.category_name) : []; 
+                            let r = await axios.get(`${auth.api}type=${t}&action=${a}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 15000 }));
+                            let items = r.data?.js?.data || r.data?.js || [];
+                            if (items.error) items = [];
+                            if ((!items || (Array.isArray(items) && items.length === 0)) && fb) {
+                                r = await axios.get(`${auth.api}type=${t}&action=${fb}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 15000 }));
+                                items = r.data?.js?.data || r.data?.js || [];
+                                if (items.error) items = [];
+                            }
+                            return (Array.isArray(items) ? items : Object.values(items)).map(g => g.title || g.name).filter(Boolean);
                         } catch(e) { return []; }
                     };
-                    const [c1, c2, c3] = await Promise.all([f('get_live_categories'), f('get_vod_categories'), f('get_series_categories')]);
-                    tvG = tvG.concat(c1); movG = movG.concat(c2); serG = serG.concat(c3);
-                } else {
-                    const auth = await this.authenticate(l);
-                    if (auth) {
-                        const fetchSt = async (t, a, fb) => {
-                            try {
-                                let r;
-                                try {
-                                    r = await axios.get(`${auth.api}type=${t}&action=${a}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 15000 }));
-                                } catch (e) {
-                                    if (auth.apiAlt) {
-                                        r = await axios.get(`${auth.apiAlt}type=${t}&action=${a}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 15000 }));
-                                    } else throw e;
-                                }
-                                let items = r.data?.js?.data || r.data?.js || [];
-                                if ((!items || (Array.isArray(items) && items.length === 0)) && fb) {
-                                    try {
-                                        r = await axios.get(`${auth.api}type=${t}&action=${fb}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 15000 }));
-                                    } catch (e) {
-                                        if (auth.apiAlt) {
-                                            r = await axios.get(`${auth.apiAlt}type=${t}&action=${fb}&JsHttpRequest=1-0`, this.getAxiosOpts(l, { headers: auth.authData.headers, timeout: 15000 }));
-                                        } else throw e;
-                                    }
-                                    items = r.data?.js?.data || r.data?.js || [];
-                                }
-                                return (Array.isArray(items) ? items : Object.values(items)).map(g => g.title || g.name).filter(Boolean);
-                            } catch(e) { return []; }
-                        };
-                        const [g1, g2, g3] = await Promise.all([
-                            fetchSt('itv', 'get_genres', 'get_categories'), 
-                            fetchSt('vod', 'get_categories', 'get_genres'), 
-                            fetchSt('series', 'get_categories', 'get_genres')
-                        ]);
-                        tvG = tvG.concat(g1); movG = movG.concat(g2); serG = serG.concat(g3);
-                    }
+
+                    tvG = tvG.concat(await fetchSt('itv', 'get_genres', 'get_categories')); 
+                    movG = movG.concat(await fetchSt('vod', 'get_categories', 'get_genres')); 
+                    serG = serG.concat(await fetchSt('series', 'get_categories', 'get_genres'));
                 }
-            } catch(e) { console.error(`[MANIFEST ERROR] Falha ao carregar categorias da lista ${i}:`, e.message); }
-            
-            if (l.selectedCategories) {
-                const sel = l.selectedCategories;
-                const applySelections = (list, originalCats) => {
-                    if (!list || list.length === 0) return originalCats;
-                    const origSelected = new Set();
-                    const origToCustom = {};
-                    list.forEach(item => {
-                        if (typeof item === 'string') {
-                            origSelected.add(item);
-                            origToCustom[item] = item;
-                        } else if (item && item.original) {
-                            origSelected.add(item.original);
-                            origToCustom[item.original] = (item.custom && item.custom.trim()) ? item.custom.trim() : item.original;
-                        }
-                    });
-                    const filtered = originalCats.filter(cat => origSelected.has(cat));
-                    if (filtered.length === 0 && originalCats.length > 0) {
-                        console.log(`[MANIFEST] Filtragem vazia — a devolver todas as categorias.`);
-                        return originalCats;
+            }
+        } catch(e) { console.error(`[MANIFEST ERROR] Falha ao carregar categorias da lista ${i}:`, e.message); }
+        
+        if (l.selectedCategories) {
+            const sel = l.selectedCategories;
+            const applySelections = (list, originalCats) => {
+                if (!list || list.length === 0) return originalCats;
+                const origSelected = new Set();
+                const origToCustom = {};
+                list.forEach(item => {
+                    if (typeof item === 'string') {
+                        origSelected.add(item);
+                        origToCustom[item] = item;
+                    } else if (item && item.original) {
+                        origSelected.add(item.original);
+                        origToCustom[item.original] = (item.custom && item.custom.trim()) ? item.custom.trim() : item.original;
                     }
-                    return filtered.map(cat => origToCustom[cat] || cat);
-                };
-                tvG = applySelections(sel.tv, tvG);
-                movG = applySelections(sel.movie, movG);
-                serG = applySelections(sel.series, serG);
-            }
+                });
+                const filtered = originalCats.filter(cat => origSelected.has(cat));
+                if (filtered.length === 0 && originalCats.length > 0) {
+                    console.log(`[MANIFEST] Filtragem vazia — a devolver todas as categorias.`);
+                    return originalCats;
+                }
+                return filtered.map(cat => origToCustom[cat] || cat);
+            };
+            tvG = applySelections(sel.tv, tvG);
+            movG = applySelections(sel.movie, movG);
+            serG = applySelections(sel.series, serG);
+        }
 
-            const uniqueTv = [...new Set(tvG.filter(Boolean))];
-            const uniqueMov = [...new Set(movG.filter(Boolean))];
-            const uniqueSer = [...new Set(serG.filter(Boolean))];
-            console.log(`[MANIFEST] Lista ${i} categorias TV=${uniqueTv.length} filmes=${uniqueMov.length} séries=${uniqueSer.length}`);
+        // ✅ FILTRO: Remove "Predefinido" e "Default" que o portal possa devolver
+        const filterUndesired = (arr) => arr.filter(cat => {
+            const c = (cat || '').trim().toLowerCase();
+            return c !== 'predefinido' && c !== 'default';
+        });
+        tvG = filterUndesired(tvG);
+        movG = filterUndesired(movG);
+        serG = filterUndesired(serG);
 
-            if (uniqueTv.length > 0) {
-                catalogs.push({ type: "tv", id: `cat_${i}`, name: l.name || `Lista ${i+1}`, extra: [{ name: "genre", options: uniqueTv }, { name: "skip" }] });
-            }
-            if (uniqueMov.length > 0) {
-                catalogs.push({ type: "movie", id: `mov_${i}`, name: `${l.name || `Lista ${i+1}`} 🎬`, extra: [{ name: "genre", options: uniqueMov }, { name: "skip" }] });
-            }
-            if (uniqueSer.length > 0) {
-                catalogs.push({ type: "series", id: `ser_${i}`, name: `${l.name || `Lista ${i+1}`} 🍿`, extra: [{ name: "genre", options: uniqueSer }, { name: "skip" }] });
-            }
-        }));
-        const addonName = lists.map(l => l.name).filter(Boolean).join(" + ") || "XuloV Hub";
-        const m = { id: "org.xulov.stalker", version: "5.3.0", name: addonName, resources: ["catalog", "stream", "meta"], types: ["tv", "movie", "series"], idPrefixes: ["xlv:"], catalogs: catalogs };
-        setCache(cacheKey, m, 60); 
-        console.log("[MANIFEST] Manifest gerado com sucesso.");
-        return m;
-    },
+        // ✅ FALLBACK: Se o portal falhar e não devolver nada, mete "All" para a aba não desaparecer
+        if (tvG.length === 0) tvG.push("All");
+        if (movG.length === 0) movG.push("All");
+        if (serG.length === 0) serG.push("All");
+
+        const uniqueTv = [...new Set(tvG.filter(Boolean))];
+        const uniqueMov = [...new Set(movG.filter(Boolean))];
+        const uniqueSer = [...new Set(serG.filter(Boolean))];
+        console.log(`[MANIFEST] Lista ${i} categorias TV=${uniqueTv.length} filmes=${uniqueMov.length} séries=${uniqueSer.length}`);
+
+        if (uniqueTv.length > 0) {
+            catalogs.push({ type: "tv", id: `cat_${i}`, name: l.name || `Lista ${i+1}`, extra: [{ name: "genre", options: uniqueTv }, { name: "skip" }] });
+        }
+        if (uniqueMov.length > 0) {
+            catalogs.push({ type: "movie", id: `mov_${i}`, name: `${l.name || `Lista ${i+1}`} 🎬`, extra: [{ name: "genre", options: uniqueMov }, { name: "skip" }] });
+        }
+        if (uniqueSer.length > 0) {
+            catalogs.push({ type: "series", id: `ser_${i}`, name: `${l.name || `Lista ${i+1}`} 🍿`, extra: [{ name: "genre", options: uniqueSer }, { name: "skip" }] });
+        }
+    }));
+    const addonName = lists.map(l => l.name).filter(Boolean).join(" + ") || "XuloV Hub";
+    const m = { id: "org.xulov.stalker", version: "5.3.0", name: addonName, resources: ["catalog", "stream", "meta"], types: ["tv", "movie", "series"], idPrefixes: ["xlv:"], catalogs: catalogs };
+    setCache(cacheKey, m, 60); 
+    console.log("[MANIFEST] Manifest gerado com sucesso.");
+    return m;
+},
     
     async getCatalog(type, id, extra, configBase64) {
     const normalize = (str) => (str || '').replace(/\s+/g, ' ').trim().toLowerCase();
