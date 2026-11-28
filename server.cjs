@@ -1581,7 +1581,7 @@ if (movieCategories.length === 0) movieCategories = await fetchStalkerCategories
 
 seriesCategories = await fetchStalkerCategories('series', 'get_categories');
 if (seriesCategories.length === 0) seriesCategories = await fetchStalkerCategories('series', 'get_genres');
-                    ]);
+                  
                 }
             } catch (e) {
                 console.error("Erro Stalker ao obter categorias:", e.message);
