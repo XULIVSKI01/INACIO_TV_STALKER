@@ -112,8 +112,7 @@ const addon = {
     async authenticate(config) {
         return await engine.authenticate(config, config.proxy);
     },
-
-    async getManifest(configBase64) {
+    
     async getManifest(configBase64) {
     console.log("[MANIFEST] Pedido de Manifest recebido.");
     const cacheKey = `manifest_${configBase64}`;
